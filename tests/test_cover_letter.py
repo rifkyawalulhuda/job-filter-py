@@ -71,6 +71,61 @@ def test_generate_cover_letter_includes_skills_if_available() -> None:
     assert "FastAPI" in letter
 
 
+def test_generate_cover_letter_uses_skill_match_context() -> None:
+    letter = generate_cover_letter(
+        _job(),
+        _profile(),
+        matched_skills=["Python", "FastAPI"],
+        missing_skills=["PostgreSQL"],
+        experience_summary="experienced backend engineer building API platforms",
+        tone="formal",
+    )
+
+    assert "Python and FastAPI" in letter
+    assert "PostgreSQL" in letter
+    assert "prepared to deepen" in letter
+    assert "experienced backend engineer building API platforms" in letter
+
+
+def test_generate_cover_letter_supports_confident_tone() -> None:
+    letter = generate_cover_letter(
+        _job(),
+        _profile(),
+        matched_skills=["Python"],
+        tone="confident",
+    )
+
+    assert "I am excited to apply for" in letter
+    assert "I am confident I can add value" in letter
+
+
+def test_generate_cover_letter_supports_custom_prompt_for_concise_output() -> None:
+    letter = generate_cover_letter(
+        _job(),
+        _profile(),
+        matched_skills=["Python", "FastAPI"],
+        missing_skills=["PostgreSQL"],
+        experience_summary="experienced backend engineer building API platforms",
+        tone="formal",
+        custom_prompt="lebih singkat",
+    )
+
+    assert "prepared to deepen" not in letter
+    assert "I am excited by the opportunity" not in letter
+
+
+def test_generate_cover_letter_supports_custom_prompt_for_formal_tone() -> None:
+    letter = generate_cover_letter(
+        _job(),
+        _profile(),
+        tone="confident",
+        custom_prompt="lebih formal",
+    )
+
+    assert "I am writing to express my interest in" in letter
+    assert "I would welcome the opportunity to support" in letter
+
+
 def test_generate_cover_letter_handles_missing_fields_gracefully() -> None:
     letter = generate_cover_letter(pd.Series({"company": "Example Corp"}), UserProfile())
 

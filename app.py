@@ -7,19 +7,26 @@ from datetime import date
 import pandas as pd
 import streamlit as st
 
-from src.applications import ensure_application_columns, update_application_status
+from src.applications import (
+    apply_saved_application_statuses,
+    ensure_application_columns,
+    persist_application_status,
+    update_application_status,
+)
 from src.cover_letter import generate_cover_letter
-from src.cv_parser import CVAnalysis, analyze_cv_bytes
-from src.data_loader import load_jobs
+from src.cv_parser import CVAnalysis, analyze_cv_bytes, match_cv_skills_to_job
+from src.database import DEFAULT_DATABASE_PATH, init_database
+from src.data_loader import load_jobs, normalize_jobs
 from src.export_excel import dataframe_to_excel_bytes
 from src.filters import JobFilters, apply_filters
 from src.paste_jobs import parse_pasted_jobs
 from src.profile import UserProfile, load_profile, save_profile
 from src.scoring import calculate_match_score
 
-PROFILE_PATH = "user_profile.json"
+DATABASE_PATH = DEFAULT_DATABASE_PATH
 WORK_MODE_OPTIONS = ["Any", "remote", "hybrid", "onsite"]
 JOB_LEVEL_OPTIONS = ["Any", "internship", "entry", "junior", "mid", "senior", "lead", "manager"]
+COVER_LETTER_TONES = ["formal", "concise", "confident"]
 
 
 def _parse_optional_float(value: str, field_label: str) -> float | None:
@@ -36,13 +43,22 @@ def _parse_optional_float(value: str, field_label: str) -> float | None:
 def _load_jobs_dataframe(uploaded_file: object | None) -> pd.DataFrame:
     """Load job data and ensure application tracking columns exist."""
     jobs = load_jobs(uploaded_file=uploaded_file)
-    return ensure_application_columns(jobs)
+    jobs = ensure_application_columns(jobs)
+    return apply_saved_application_statuses(jobs, path=DATABASE_PATH)
 
 
 def _load_pasted_jobs_dataframe(pasted_text: str) -> pd.DataFrame:
     """Parse pasted lowongan text and ensure application tracking columns exist."""
     jobs = parse_pasted_jobs(pasted_text)
-    return ensure_application_columns(jobs)
+    jobs = ensure_application_columns(jobs)
+    return apply_saved_application_statuses(jobs, path=DATABASE_PATH)
+
+
+def _prepare_pasted_preview_dataframe(dataframe: pd.DataFrame) -> pd.DataFrame:
+    """Normalize an editable pasted-jobs preview DataFrame."""
+    normalized = normalize_jobs(dataframe)
+    normalized = ensure_application_columns(normalized)
+    return apply_saved_application_statuses(normalized, path=DATABASE_PATH)
 
 
 def _merge_profile_with_cv(profile: UserProfile, analysis: CVAnalysis) -> UserProfile:
@@ -54,20 +70,6 @@ def _merge_profile_with_cv(profile: UserProfile, analysis: CVAnalysis) -> UserPr
         linkedin_url=profile.linkedin_url or analysis.linkedin_url,
         portfolio_url=profile.portfolio_url or analysis.portfolio_url,
     )
-
-
-def _job_skills_list(row: pd.Series) -> list[str]:
-    """Return normalized skills listed on one job row."""
-    skills_text = str(row.get("skills", "") or "")
-    return [skill.strip() for skill in skills_text.split(";") if skill.strip()]
-
-
-def _matched_cv_skills(job_row: pd.Series, cv_skills: list[str]) -> list[str]:
-    """Return CV skills that match the selected job."""
-    if not cv_skills:
-        return []
-    job_text = f"{job_row.get('skills', '')} {job_row.get('description', '')}".casefold()
-    return [skill for skill in cv_skills if skill.casefold() in job_text]
 
 
 def _build_job_filters(
@@ -122,6 +124,20 @@ def _sync_status_to_state(row_index: int, status: str) -> None:
         )
 
 
+def _persist_selected_job_status(
+    row: pd.Series,
+    status: str,
+    cover_letter_text: str = "",
+) -> None:
+    """Persist one selected job status update to SQLite."""
+    persist_application_status(
+        row.to_dict(),
+        status=status,
+        path=DATABASE_PATH,
+        cover_letter_text=cover_letter_text,
+    )
+
+
 def _render_results_metrics(results_df: pd.DataFrame, total_jobs: int) -> None:
     """Render high-level result metrics."""
     average_score = 0.0
@@ -139,9 +155,18 @@ def main() -> None:
     st.set_page_config(page_title="Job Vacancy Filter", layout="wide")
     st.title("Job Vacancy Filter")
     st.caption("Manual-assisted job filtering and application preparation. No auto-submit, scraping, or CAPTCHA bypass.")
+    try:
+        init_database(DATABASE_PATH)
+    except Exception:
+        st.error("We could not initialize the local application database. Please check file permissions and try again.")
+        return
 
     if "profile" not in st.session_state:
-        st.session_state.profile = load_profile(PROFILE_PATH)
+        try:
+            st.session_state.profile = load_profile(DATABASE_PATH)
+        except Exception:
+            st.session_state.profile = UserProfile()
+            st.warning("We could not load the saved profile from the local database, so the form started empty.")
     if "jobs_df" not in st.session_state:
         st.session_state.jobs_df = pd.DataFrame()
     if "results_df" not in st.session_state:
@@ -156,10 +181,16 @@ def main() -> None:
         st.session_state.pasted_jobs_df = pd.DataFrame()
     if "pasted_jobs_text" not in st.session_state:
         st.session_state.pasted_jobs_text = ""
+    if "pasted_jobs_preview_df" not in st.session_state:
+        st.session_state.pasted_jobs_preview_df = pd.DataFrame()
     if "cv_analysis" not in st.session_state:
         st.session_state.cv_analysis = CVAnalysis()
     if "cv_file_name" not in st.session_state:
         st.session_state.cv_file_name = ""
+    if "cover_letter_tone" not in st.session_state:
+        st.session_state.cover_letter_tone = "formal"
+    if "cover_letter_custom_prompt" not in st.session_state:
+        st.session_state.cover_letter_custom_prompt = ""
 
     with st.sidebar:
         st.header("Data Source")
@@ -225,10 +256,10 @@ def main() -> None:
                 linkedin_url=profile_linkedin,
                 portfolio_url=profile_portfolio,
             )
-            save_profile(st.session_state.profile, PROFILE_PATH)
-            st.sidebar.success("Profile saved locally.")
-        except OSError:
-            st.sidebar.error("Could not save the profile. Please try again.")
+            save_profile(st.session_state.profile, DATABASE_PATH)
+            st.sidebar.success("Profile saved locally to SQLite.")
+        except Exception:
+            st.sidebar.error("Could not save the profile to the local database. Please try again.")
 
     if cv_uploaded_file is not None and st.session_state.cv_file_name != cv_uploaded_file.name:
         try:
@@ -263,6 +294,7 @@ def main() -> None:
     st.session_state.pasted_jobs_text = pasted_jobs_text
     if clear_pasted_jobs_clicked:
         st.session_state.pasted_jobs_df = pd.DataFrame()
+        st.session_state.pasted_jobs_preview_df = pd.DataFrame()
         st.session_state.pasted_jobs_text = ""
         if uploaded_file is None:
             st.session_state.data_source_name = None
@@ -270,14 +302,9 @@ def main() -> None:
 
     if import_pasted_jobs_clicked:
         try:
-            st.session_state.pasted_jobs_df = _load_pasted_jobs_dataframe(pasted_jobs_text)
-            st.session_state.jobs_df = st.session_state.pasted_jobs_df.copy()
-            st.session_state.results_df = pd.DataFrame()
-            st.session_state.cover_letter_text = ""
-            st.session_state.selected_job_index = None
-            st.session_state.data_source_name = "pasted_jobs"
+            st.session_state.pasted_jobs_preview_df = _load_pasted_jobs_dataframe(pasted_jobs_text)
             st.sidebar.success(
-                f"Imported {len(st.session_state.pasted_jobs_df)} pasted lowongan."
+                f"Parsed {len(st.session_state.pasted_jobs_preview_df)} pasted lowongan. Review and edit the preview below, then apply it."
             )
         except ValueError as exc:
             st.sidebar.error(str(exc))
@@ -290,6 +317,47 @@ def main() -> None:
         data_source_name = "pasted_jobs"
     else:
         data_source_name = "data/sample_jobs.csv"
+
+    if not st.session_state.pasted_jobs_preview_df.empty:
+        st.subheader("Pasted Jobs Preview")
+        st.caption("Review and edit parsed lowongan before using them as the active data source.")
+        edited_preview_df = st.data_editor(
+            st.session_state.pasted_jobs_preview_df,
+            width="stretch",
+            num_rows="dynamic",
+            hide_index=True,
+            key="pasted_jobs_preview_editor",
+        )
+        preview_actions_col1, preview_actions_col2 = st.columns(2)
+        apply_pasted_preview_clicked = preview_actions_col1.button(
+            "Apply Edited Pasted Jobs",
+            width="stretch",
+        )
+        discard_pasted_preview_clicked = preview_actions_col2.button(
+            "Discard Preview",
+            width="stretch",
+        )
+
+        if discard_pasted_preview_clicked:
+            st.session_state.pasted_jobs_preview_df = pd.DataFrame()
+            st.success("Pasted jobs preview discarded.")
+        elif apply_pasted_preview_clicked:
+            try:
+                st.session_state.pasted_jobs_df = _prepare_pasted_preview_dataframe(edited_preview_df)
+                st.session_state.pasted_jobs_preview_df = st.session_state.pasted_jobs_df.copy()
+                st.session_state.jobs_df = st.session_state.pasted_jobs_df.copy()
+                st.session_state.results_df = pd.DataFrame()
+                st.session_state.cover_letter_text = ""
+                st.session_state.selected_job_index = None
+                st.session_state.data_source_name = "pasted_jobs"
+                data_source_name = "pasted_jobs"
+                st.success(
+                    f"Using {len(st.session_state.pasted_jobs_df)} edited pasted lowongan as the active data source."
+                )
+            except ValueError as exc:
+                st.error(str(exc))
+            except Exception:
+                st.error("We could not apply the edited pasted jobs. Please review the preview values and try again.")
 
     if data_source_name == "pasted_jobs":
         st.session_state.jobs_df = st.session_state.pasted_jobs_df.copy()
@@ -383,13 +451,34 @@ def main() -> None:
     )
     selected_job = results_df.loc[selected_job_index]
     st.session_state.selected_job_index = selected_job_index
+    selected_tone = st.selectbox(
+        "Cover letter tone",
+        options=COVER_LETTER_TONES,
+        index=COVER_LETTER_TONES.index(st.session_state.cover_letter_tone),
+    )
+    st.session_state.cover_letter_tone = selected_tone
+    custom_cover_letter_prompt = st.text_input(
+        "Edit prompt",
+        value=st.session_state.cover_letter_custom_prompt,
+        help="Contoh: lebih formal, lebih singkat, lebih percaya diri.",
+    )
+    st.session_state.cover_letter_custom_prompt = custom_cover_letter_prompt
 
+    skill_match = None
     if st.session_state.cv_analysis.skills:
-        matched_skills = _matched_cv_skills(selected_job, st.session_state.cv_analysis.skills)
-        if matched_skills:
-            st.info(f"Matched CV skills for this job: {', '.join(matched_skills)}")
+        skill_match = match_cv_skills_to_job(
+            st.session_state.cv_analysis.skills,
+            str(selected_job.get("skills", "") or ""),
+            str(selected_job.get("description", "") or ""),
+        )
+        if skill_match.matched:
+            st.info(f"Matched CV skills for this job: {', '.join(skill_match.matched)}")
         else:
             st.info("CV uploaded, but no direct skill overlap was detected for this selected job yet.")
+        if skill_match.inferred_job_skills:
+            st.caption(f"Detected job skills: {', '.join(skill_match.inferred_job_skills)}")
+        if skill_match.missing:
+            st.warning(f"Job skills not detected in CV yet: {', '.join(skill_match.missing)}")
 
     prepare_clicked = st.button("Prepare Application")
     if prepare_clicked:
@@ -397,8 +486,18 @@ def main() -> None:
             st.session_state.cover_letter_text = generate_cover_letter(
                 selected_job,
                 st.session_state.profile,
+                matched_skills=skill_match.matched if skill_match is not None else None,
+                missing_skills=skill_match.missing if skill_match is not None else None,
+                experience_summary=st.session_state.cv_analysis.experience_summary,
+                tone=selected_tone,
+                custom_prompt=custom_cover_letter_prompt,
             )
             _sync_status_to_state(selected_job_index, "Draft Ready")
+            _persist_selected_job_status(
+                selected_job,
+                "Draft Ready",
+                cover_letter_text=st.session_state.cover_letter_text,
+            )
             results_df = st.session_state.results_df.copy()
             selected_job = results_df.loc[selected_job_index]
         except Exception:
@@ -428,6 +527,7 @@ def main() -> None:
     if st.button("Mark as Submitted"):
         try:
             _sync_status_to_state(selected_job_index, "Submitted")
+            _persist_selected_job_status(selected_job, "Submitted")
             st.success("Application status updated to Submitted.")
         except (ValueError, IndexError):
             st.error("We could not update the application status for that job.")

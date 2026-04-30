@@ -1,11 +1,11 @@
-"""Candidate profile helpers."""
+"""Candidate profile helpers backed by local SQLite storage."""
 
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-import json
-from pathlib import Path
 from typing import Any
+
+from src.database import DEFAULT_DATABASE_PATH, load_profile_data, save_profile_data
 
 
 @dataclass(slots=True)
@@ -35,27 +35,15 @@ def profile_from_dict(data: dict[str, Any]) -> UserProfile:
     )
 
 
-def save_profile(profile: UserProfile, path: str = "user_profile.json") -> None:
-    """Save a user profile to a local JSON file using UTF-8 encoding."""
-    profile_path = Path(path)
-    profile_path.write_text(
-        json.dumps(profile_to_dict(profile), ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+def save_profile(profile: UserProfile, path: str = DEFAULT_DATABASE_PATH) -> None:
+    """Save a user profile to a local SQLite database."""
+    save_profile_data(profile_to_dict(profile), path=path)
 
 
-def load_profile(path: str = "user_profile.json") -> UserProfile:
-    """Load a user profile from local JSON or return an empty profile on failure."""
-    profile_path = Path(path)
-    if not profile_path.exists():
-        return UserProfile()
-
+def load_profile(path: str = DEFAULT_DATABASE_PATH) -> UserProfile:
+    """Load a user profile from local SQLite or return an empty profile on failure."""
     try:
-        raw_data = json.loads(profile_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
+        raw_data = load_profile_data(path=path)
+    except OSError:
         return UserProfile()
-
-    if not isinstance(raw_data, dict):
-        return UserProfile()
-
     return profile_from_dict(raw_data)
