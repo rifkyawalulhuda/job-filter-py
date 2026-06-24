@@ -119,7 +119,7 @@ def test_generate_cover_letter_supports_custom_prompt_for_formal_tone() -> None:
         _job(),
         _profile(),
         tone="confident",
-        custom_prompt="lebih formal",
+        custom_prompt="more formal",
     )
 
     assert "I am writing to express my interest in" in letter

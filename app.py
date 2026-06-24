@@ -26,6 +26,9 @@ from src.llm import (
     load_llm_config,
     save_llm_config,
     generate_ai_cover_letter,
+    ai_enhance_jobs,
+    ai_generate_profile_summary,
+    ai_generate_cv,
 )
 
 DATABASE_PATH = DEFAULT_DATABASE_PATH
@@ -42,198 +45,66 @@ COVER_LETTER_TONES = ["formal", "concise", "confident"]
 _CUSTOM_CSS = """
 <style>
 /* ═══════════════════════════════════════════════════════════════════════
-   Design System: Swiss Modernism + Professional Blue
-   Palette: Financial Dashboard (OLED dark) + Job Board blue
+   Sidebar styling — follows Streamlit's native theme automatically.
+   Light & dark mode work out-of-the-box via Streamlit config.
    ═══════════════════════════════════════════════════════════════════════ */
 
-/* ── Light mode ───────────────────────────────────────────────────── */
-:root,
-body.light-theme {
-    --primary: #0369A1;
-    --primary-hover: #0284C7;
-    --primary-bg: #F0F9FF;
-    --accent: #16A34A;
-    --accent-bg: #DCFCE7;
-    --text: #0C4A6E;
-    --text-heading: #0369A1;
-    --text-muted: #64748B;
-    --border: #BAE6FD;
-    --border-subtle: #E7EFF5;
-    --input-bg: #FFFFFF;
-    --sidebar-bg-start: #F0F9FF;
-    --sidebar-bg-end: #FFFFFF;
-    --badge-inactive-bg: #F1F5F9;
-    --focus-ring: rgba(3, 105, 161, 0.15);
-    --divider: #BAE6FD;
-    --btn-text: #FFFFFF;
+/* ── Section headers — no longer needed, using st.expander ── */
+/* Streamlit's expander handles its own styling */
+
+/* ── Caption ── */
+section[data-testid="stSidebar"] .stCaption {
+    font-size: 0.75rem !important;
+    opacity: 0.7 !important;
 }
 
-/* ── Dark mode ────────────────────────────────────────────────────── */
-body.dark-theme {
-    --primary: #38BDF8;
-    --primary-hover: #7DD3FC;
-    --primary-bg: rgba(14, 165, 233, 0.1);
-    --accent: #4ADE80;
-    --accent-bg: rgba(74, 222, 128, 0.15);
-    --text: #E2E8F0;
-    --text-heading: #BAE6FD;
-    --text-muted: #94A3B8;
-    --border: #1E3A5F;
-    --border-subtle: #1E293B;
-    --input-bg: #1E293B;
-    --sidebar-bg-start: #0B1623;
-    --sidebar-bg-end: #0F1D2E;
-    --badge-inactive-bg: #1E293B;
-    --focus-ring: rgba(56, 189, 248, 0.25);
-    --divider: #1E3A5F;
-    --btn-text: #0F172A;
-}
-
-/* ═════════════════════════════════════════════════════════════════════
-   FORCE DARK MODE — override Streamlit's internal variables
-   ═════════════════════════════════════════════════════════════════════ */
-body.dark-theme section[data-testid="stSidebar"] {
-    --sidebar-background-color: #0B1623 !important;
-    background: linear-gradient(180deg, #0B1623 0%, #0F1D2E 100%) !important;
-    background-color: #0B1623 !important;
-    border-right: 1px solid #1E293B !important;
-}
-body.dark-theme section[data-testid="stSidebar"] * {
-    color-scheme: dark !important;
-}
-body.dark-theme section[data-testid="stSidebar"] .st-emotion-cache-6qob1r,
-body.dark-theme section[data-testid="stSidebar"] .st-emotion-cache-1cypcdb,
-body.dark-theme section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"] {
-    background: transparent !important;
-}
-
-/* ── Sidebar section headers ── */
-section[data-testid="stSidebar"] .stMarkdown h2 {
-    font-size: 0.85rem !important;
-    font-weight: 600 !important;
-    letter-spacing: 0.04em !important;
-    text-transform: uppercase !important;
-    color: var(--text-heading) !important;
-    margin-top: 1.25rem !important;
-    margin-bottom: 0.5rem !important;
-    padding-bottom: 0.3rem !important;
-    border-bottom: 2px solid var(--border) !important;
-}
-body.dark-theme section[data-testid="stSidebar"] .stMarkdown h2 {
-    color: #BAE6FD !important;
-    border-bottom-color: #1E3A5F !important;
-}
-
-/* ── Text ── */
-section[data-testid="stSidebar"] .stMarkdown p,
-section[data-testid="stSidebar"] .stMarkdown span {
-    color: var(--text) !important;
-}
-body.dark-theme section[data-testid="stSidebar"] .stMarkdown p,
-body.dark-theme section[data-testid="stSidebar"] .stMarkdown span,
-body.dark-theme section[data-testid="stSidebar"] label {
-    color: #E2E8F0 !important;
-}
-body.dark-theme section[data-testid="stSidebar"] .stCaption,
-body.dark-theme section[data-testid="stSidebar"] .stCaption p {
-    color: #94A3B8 !important;
-}
-
-/* ── Inputs ── */
+/* ── Inputs: clean borders ── */
 section[data-testid="stSidebar"] input[type="text"],
 section[data-testid="stSidebar"] input[type="password"] {
-    border: 1px solid var(--border) !important;
     border-radius: 6px !important;
     padding: 0.4rem 0.6rem !important;
     font-size: 0.85rem !important;
-    background: var(--input-bg) !important;
-    color: var(--text) !important;
+    border: 1px solid rgba(128, 128, 128, 0.25) !important;
+    background: transparent !important;
 }
-body.dark-theme section[data-testid="stSidebar"] input[type="text"],
-body.dark-theme section[data-testid="stSidebar"] input[type="password"] {
-    background: #1E293B !important;
-    border-color: #1E3A5F !important;
-    color: #E2E8F0 !important;
-}
-body.dark-theme section[data-testid="stSidebar"] input::placeholder {
-    color: #64748B !important;
-    opacity: 0.7 !important;
-}
-section[data-testid="stSidebar"] input:focus {
-    box-shadow: 0 0 0 2px var(--focus-ring) !important;
-    outline: none !important;
-}
-body.dark-theme section[data-testid="stSidebar"] input:focus {
-    border-color: #38BDF8 !important;
-    box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.25) !important;
+section[data-testid="stSidebar"] input::placeholder {
+    opacity: 0.5 !important;
 }
 
-/* ── Select ── */
-body.dark-theme section[data-testid="stSidebar"] [data-baseweb="select"] {
-    background: #1E293B !important;
-}
-body.dark-theme section[data-testid="stSidebar"] [data-baseweb="select"] * {
-    color: #E2E8F0 !important;
+/* ── Select: clean border ── */
+section[data-testid="stSidebar"] [data-baseweb="select"] {
+    border-radius: 6px !important;
 }
 
 /* ── Primary button ── */
 section[data-testid="stSidebar"] button[kind="primary"] {
-    background: var(--primary) !important;
-    border: none !important;
     border-radius: 6px !important;
-    color: var(--btn-text) !important;
     font-weight: 600 !important;
-    transition: background 0.2s !important;
+    transition: opacity 0.2s !important;
 }
 section[data-testid="stSidebar"] button[kind="primary"]:hover {
-    background: var(--primary-hover) !important;
+    opacity: 0.9 !important;
 }
 
 /* ── Secondary buttons ── */
 section[data-testid="stSidebar"] button[kind="secondary"],
 section[data-testid="stSidebar"] button[kind="secondaryFormSubmit"] {
-    border: 1px solid var(--border) !important;
     border-radius: 6px !important;
-    color: var(--primary) !important;
-    background: transparent !important;
     font-weight: 500 !important;
-    transition: all 0.2s !important;
-}
-body.dark-theme section[data-testid="stSidebar"] button[kind="secondary"],
-body.dark-theme section[data-testid="stSidebar"] button[kind="secondaryFormSubmit"] {
-    border-color: #1E3A5F !important;
-    color: #38BDF8 !important;
-}
-section[data-testid="stSidebar"] button[kind="secondary"]:hover,
-section[data-testid="stSidebar"] button[kind="secondaryFormSubmit"]:hover {
-    border-color: var(--primary) !important;
-    background: var(--primary-bg) !important;
-}
-
-/* ── Divider ── */
-section[data-testid="stSidebar"] hr {
-    border-color: var(--divider) !important;
-}
-
-/* ── Checkbox ── */
-body.dark-theme section[data-testid="stSidebar"] .stCheckbox label {
-    color: #E2E8F0 !important;
+    transition: opacity 0.2s !important;
+    border: 1px solid rgba(128, 128, 128, 0.25) !important;
 }
 
 /* ── Expander ── */
-body.dark-theme section[data-testid="stSidebar"] .streamlit-expanderHeader {
-    background: #1E293B !important;
-    border-color: #1E3A5F !important;
-    color: #94A3B8 !important;
+section[data-testid="stSidebar"] .streamlit-expanderHeader {
+    border-radius: 6px !important;
+    border: 1px solid rgba(128, 128, 128, 0.2) !important;
 }
-body.dark-theme section[data-testid="stSidebar"] .streamlit-expanderHeader svg {
-    fill: #94A3B8 !important;
-}
-body.dark-theme section[data-testid="stSidebar"] .streamlit-expanderContent {
-    background: transparent !important;
+section[data-testid="stSidebar"] .streamlit-expanderContent {
+    border: none !important;
 }
 
-/* ── Status badge ── */
+/* ── AI status badge ── */
 .ai-status-badge {
     display: inline-block;
     padding: 2px 8px;
@@ -244,67 +115,21 @@ body.dark-theme section[data-testid="stSidebar"] .streamlit-expanderContent {
     vertical-align: middle;
     margin-left: 6px;
 }
-.ai-status-active { background: var(--accent-bg); color: var(--accent); }
-.ai-status-inactive { background: var(--badge-inactive-bg); color: var(--text-muted); }
-
-/* ── File uploader ── */
-body.dark-theme section[data-testid="stSidebar"] [data-testid="stFileUploader"] {
-    background: #1E293B !important;
-    border-color: #1E3A5F !important;
+.ai-status-active {
+    background: rgba(22, 163, 74, 0.15);
+    color: #16A34A;
 }
-body.dark-theme section[data-testid="stSidebar"] [data-testid="stFileUploader"] * {
-    color: #E2E8F0 !important;
-}
-body.dark-theme section[data-testid="stSidebar"] [data-testid="stFileUploader"] small {
-    color: #94A3B8 !important;
+.ai-status-inactive {
+    background: rgba(128, 128, 128, 0.12);
+    color: inherit;
+    opacity: 0.6;
 }
 
-/* ── Scrollbar ── */
-body.dark-theme section[data-testid="stSidebar"] ::-webkit-scrollbar-track {
-    background: #0B1623 !important;
-}
-body.dark-theme section[data-testid="stSidebar"] ::-webkit-scrollbar-thumb {
-    background: #1E3A5F !important;
-    border-radius: 4px !important;
-}
-
-/* ── Main area fixes ── */
-body.dark-theme .stDataFrame {
-    border-color: #1E293B !important;
-}
-body.dark-theme .stDownloadButton button {
-    background: transparent !important;
-    border-color: #1E3A5F !important;
-    color: #38BDF8 !important;
-}
-body.dark-theme .stDownloadButton button:hover {
-    border-color: #38BDF8 !important;
-    background: rgba(14, 165, 233, 0.1) !important;
+/* ── Scrollbar subtle ── */
+section[data-testid="stSidebar"] ::-webkit-scrollbar-thumb {
+    border-radius: 4px;
 }
 </style>
-
-<script>
-(function(){
-    function applyTheme() {
-        var mqDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-        var sidebar = document.querySelector('section[data-testid="stSidebar"]');
-        var sidebarBg = sidebar ? getComputedStyle(sidebar).backgroundColor : '';
-        /* Parse RGB values — if dark, channel values are low */
-        var nums = sidebarBg.match(/\\d+/g);
-        var avg = nums ? nums.reduce(function(a,b){return +a+ +b;},0)/nums.length : 255;
-        var isStreamlitDark = avg < 80;
-        var isDark = mqDark || isStreamlitDark;
-        document.body.classList.toggle('dark-theme', isDark);
-        document.body.classList.toggle('light-theme', !isDark);
-    }
-    applyTheme();
-    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
-    new MutationObserver(applyTheme).observe(document.body, {attributes: true, attributeFilter: ['class']});
-    setTimeout(applyTheme, 300);
-    setTimeout(applyTheme, 800);
-    setTimeout(applyTheme, 2000);
-})();
-</script>
 """
 
 
@@ -459,47 +284,47 @@ def main() -> None:
                 st.session_state[key] = default
 
     # ══════════════════════════════════════════════════════════════════════
-    # SIDEBAR
+    # SIDEBAR — Collapsible Sections
     # ══════════════════════════════════════════════════════════════════════
     with st.sidebar:
-        # ── Search Section ───────────────────────────────────────────────
-        st.markdown("## Search Filters")
-        st.caption("Find jobs on LinkedIn Indonesia")
+        # ── Search Section (expanded by default) ──────────────────────
+        with st.expander("Search Filters", expanded=True):
+            st.caption("Find jobs on LinkedIn Indonesia")
 
-        keyword = st.text_input(
-            "Keyword / Job title",
-            placeholder="e.g. Python Developer",
-            label_visibility="collapsed",
-        )
-        location = st.text_input(
-            "Location",
-            placeholder="e.g. Jakarta",
-            label_visibility="collapsed",
-        )
-
-        col1, col2 = st.columns(2)
-        with col1:
-            work_mode = st.selectbox(
-                "Work mode", WORK_MODE_OPTIONS, label_visibility="collapsed"
+            keyword = st.text_input(
+                "Keyword / Job title",
+                placeholder="e.g. Python Developer",
+                label_visibility="collapsed",
             )
-        with col2:
-            job_level = st.selectbox(
-                "Job level", JOB_LEVEL_OPTIONS, label_visibility="collapsed"
+            location = st.text_input(
+                "Location",
+                placeholder="e.g. Jakarta",
+                label_visibility="collapsed",
             )
 
-        skills_text = st.text_input(
-            "Skills",
-            placeholder="Python, React, Docker",
-            label_visibility="collapsed",
-        )
+            col1, col2 = st.columns(2)
+            with col1:
+                work_mode = st.selectbox(
+                    "Work mode", WORK_MODE_OPTIONS, label_visibility="collapsed"
+                )
+            with col2:
+                job_level = st.selectbox(
+                    "Job level", JOB_LEVEL_OPTIONS, label_visibility="collapsed"
+                )
 
-        with st.expander("Salary & Date", expanded=False):
-            minimum_salary_text = st.text_input("Minimum salary")
-            maximum_salary_text = st.text_input("Maximum salary")
-            posted_after = st.date_input("Posted after", value=None)
-            include_unknown_salary = st.checkbox(
-                "Include unknown salary", value=True
+            skills_text = st.text_input(
+                "Skills",
+                placeholder="Python, React, Docker",
+                label_visibility="collapsed",
             )
+
+            with st.expander("Salary & Date", expanded=False):
+                minimum_salary_text = st.text_input("Minimum salary")
+                maximum_salary_text = st.text_input("Maximum salary")
+                posted_after = st.date_input("Posted after", value=None)
+                include_unknown_salary = st.checkbox(
+                    "Include unknown salary", value=True
+                )
 
         ai_search_clicked = st.button(
             "Search Jobs",
@@ -509,56 +334,73 @@ def main() -> None:
             help="Search LinkedIn Indonesia for matching jobs.",
         )
 
-        st.divider()
+        # ── Profile & CV Section ─────────────────────────────────────
+        with st.expander("Profile & CV", expanded=False):
+            with st.form("profile_form"):
+                profile_name = st.text_input(
+                    "Name",
+                    value=st.session_state.profile.name,
+                    label_visibility="collapsed",
+                    placeholder="Your name",
+                )
+                profile_email = st.text_input(
+                    "Email",
+                    value=st.session_state.profile.email,
+                    label_visibility="collapsed",
+                    placeholder="your@email.com",
+                )
+                profile_phone = st.text_input(
+                    "Phone",
+                    value=st.session_state.profile.phone,
+                    label_visibility="collapsed",
+                    placeholder="+62...",
+                )
+                profile_linkedin = st.text_input(
+                    "LinkedIn URL",
+                    value=st.session_state.profile.linkedin_url,
+                    label_visibility="collapsed",
+                    placeholder="linkedin.com/in/...",
+                )
+                profile_portfolio = st.text_input(
+                    "Portfolio URL",
+                    value=st.session_state.profile.portfolio_url,
+                    label_visibility="collapsed",
+                    placeholder="yourportfolio.com",
+                )
+                save_profile_clicked = st.form_submit_button(
+                    "Save Profile", width="stretch"
+                )
 
-        # ── Profile Section ──────────────────────────────────────────────
-        st.markdown("## Profile")
-        with st.form("profile_form"):
-            profile_name = st.text_input(
-                "Name",
-                value=st.session_state.profile.name,
+            cv_uploaded_file = st.file_uploader(
+                "Upload CV (PDF/DOCX)",
+                type=["pdf", "docx"],
+                key="cv_uploader",
                 label_visibility="collapsed",
-                placeholder="Your name",
             )
-            profile_email = st.text_input(
-                "Email",
-                value=st.session_state.profile.email,
-                label_visibility="collapsed",
-                placeholder="your@email.com",
-            )
-            profile_phone = st.text_input(
-                "Phone",
-                value=st.session_state.profile.phone,
-                label_visibility="collapsed",
-                placeholder="+62...",
-            )
-            profile_linkedin = st.text_input(
-                "LinkedIn URL",
-                value=st.session_state.profile.linkedin_url,
-                label_visibility="collapsed",
-                placeholder="linkedin.com/in/...",
-            )
-            profile_portfolio = st.text_input(
-                "Portfolio URL",
-                value=st.session_state.profile.portfolio_url,
-                label_visibility="collapsed",
-                placeholder="yourportfolio.com",
-            )
-            save_profile_clicked = st.form_submit_button(
-                "Save Profile", width="stretch"
+            use_cv_profile_clicked = st.button(
+                "Use CV Details in Profile",
+                width="stretch",
+                disabled=cv_uploaded_file is None,
             )
 
-        cv_uploaded_file = st.file_uploader(
-            "Upload CV (PDF/DOCX)",
-            type=["pdf", "docx"],
-            key="cv_uploader",
-            label_visibility="collapsed",
-        )
-        use_cv_profile_clicked = st.button(
-            "Use CV Details in Profile",
-            width="stretch",
-            disabled=cv_uploaded_file is None,
-        )
+            # AI-powered Profile & CV generation
+            if st.session_state.llm_config.is_configured:
+                st.divider()
+                st.caption("AI-powered generation")
+
+                ai_summary_clicked = st.button(
+                    "AI Generate Summary",
+                    width="stretch",
+                    help="Generate a professional summary using your LLM.",
+                )
+                ai_cv_clicked = st.button(
+                    "AI Generate CV",
+                    width="stretch",
+                    help="Generate a complete CV using your LLM and profile data.",
+                )
+            else:
+                ai_summary_clicked = False
+                ai_cv_clicked = False
 
     # ── Profile save handler ────────────────────────────────────────────
     if save_profile_clicked:
@@ -615,61 +457,95 @@ def main() -> None:
         else:
             st.sidebar.error("Upload a readable CV first before using CV details.")
 
+    # ── AI Generate Summary handler ──────────────────────────────────
+    if ai_summary_clicked:
+        try:
+            with st.spinner("🤖 AI generating professional summary..."):
+                summary = ai_generate_profile_summary(
+                    name=st.session_state.profile.name or "Professional",
+                    skills=", ".join(st.session_state.cv_analysis.skills) if st.session_state.cv_analysis.skills else "",
+                    experience=st.session_state.cv_analysis.experience_summary,
+                    target_role=keyword if keyword else "",
+                    config=st.session_state.llm_config,
+                )
+            st.session_state["ai_generated_summary"] = summary
+            st.sidebar.success("AI summary generated!")
+        except Exception as exc:
+            st.sidebar.error(f"AI summary failed: {exc}")
+
+    # ── AI Generate CV handler ───────────────────────────────────────
+    if ai_cv_clicked:
+        try:
+            with st.spinner("🤖 AI generating CV..."):
+                cv_text = ai_generate_cv(
+                    name=st.session_state.profile.name or "Professional",
+                    email=st.session_state.profile.email,
+                    phone=st.session_state.profile.phone,
+                    linkedin=st.session_state.profile.linkedin_url,
+                    skills=", ".join(st.session_state.cv_analysis.skills) if st.session_state.cv_analysis.skills else "",
+                    experience=st.session_state.cv_analysis.experience_summary,
+                    target_role=keyword if keyword else "",
+                    config=st.session_state.llm_config,
+                )
+            st.session_state["ai_generated_cv"] = cv_text
+            st.sidebar.success("AI CV generated!")
+        except Exception as exc:
+            st.sidebar.error(f"AI CV generation failed: {exc}")
+
     # ── CV insights (sidebar) ───────────────────────────────────────────
     if st.session_state.cv_analysis.text:
         with st.sidebar:
-            st.divider()
-            st.markdown("## CV Insights")
-            if st.session_state.cv_analysis.name:
-                st.caption(f"**Name:** {st.session_state.cv_analysis.name}")
-            if st.session_state.cv_analysis.email:
-                st.caption(f"**Email:** {st.session_state.cv_analysis.email}")
-            if st.session_state.cv_analysis.phone:
-                st.caption(f"**Phone:** {st.session_state.cv_analysis.phone}")
-            if st.session_state.cv_analysis.skills:
-                st.caption("**Skills:** " + ", ".join(st.session_state.cv_analysis.skills))
+            with st.expander("CV Insights", expanded=False):
+                if st.session_state.cv_analysis.name:
+                    st.caption(f"**Name:** {st.session_state.cv_analysis.name}")
+                if st.session_state.cv_analysis.email:
+                    st.caption(f"**Email:** {st.session_state.cv_analysis.email}")
+                if st.session_state.cv_analysis.phone:
+                    st.caption(f"**Phone:** {st.session_state.cv_analysis.phone}")
+                if st.session_state.cv_analysis.skills:
+                    st.caption("**Skills:** " + ", ".join(st.session_state.cv_analysis.skills))
 
     # ── BYOK Panel ──────────────────────────────────────────────────────
     with st.sidebar:
-        st.divider()
         ai_status = "Active" if st.session_state.llm_config.is_configured else "Inactive"
         ai_badge = "ai-status-active" if st.session_state.llm_config.is_configured else "ai-status-inactive"
-        st.markdown(
-            f"## AI Settings "
-            f'<span class="ai-status-badge {ai_badge}">{ai_status}</span>',
-            unsafe_allow_html=True,
-        )
-        st.caption("Bring Your Own Key")
 
-        with st.form("byok_form"):
-            byok_api_base = st.text_input(
-                "API Base URL",
-                value=st.session_state.llm_config.api_base,
-                label_visibility="collapsed",
-                placeholder="https://dough.id/api/v1",
+        with st.expander("AI Settings", expanded=False):
+            st.markdown(
+                f'<span class="ai-status-badge {ai_badge}">{ai_status}</span>',
+                unsafe_allow_html=True,
             )
-            byok_api_key = st.text_input(
-                "API Key",
-                value=st.session_state.llm_config.api_key,
-                type="password",
-                label_visibility="collapsed",
-                placeholder="sk-...",
-            )
-            byok_model = st.text_input(
-                "Model",
-                value=st.session_state.llm_config.model,
-                label_visibility="collapsed",
-                placeholder="mimo/mimo-v2.5",
-            )
-            save_byok_clicked = st.form_submit_button(
-                "Save AI Config", width="stretch"
-            )
+            st.caption("Bring Your Own Key")
 
-        st.session_state.use_ai_cover_letter = st.checkbox(
-            "AI-Powered Cover Letter",
-            value=st.session_state.use_ai_cover_letter,
-            help="Generate personalized cover letters using your LLM.",
-        )
+            with st.form("byok_form"):
+                byok_api_base = st.text_input(
+                    "API Base URL",
+                    value=st.session_state.llm_config.api_base,
+                    label_visibility="collapsed",
+                    placeholder="https://dough.id/api/v1",
+                )
+                byok_api_key = st.text_input(
+                    "API Key",
+                    value=st.session_state.llm_config.api_key,
+                    type="password",
+                    label_visibility="collapsed",
+                    placeholder="sk-...",
+                )
+                byok_model = st.text_input(
+                    "Model",
+                    value=st.session_state.llm_config.model,
+                    label_visibility="collapsed",
+                    placeholder="mimo/mimo-v2.5",
+                )
+                save_byok_clicked = st.form_submit_button(
+                    "Save AI Config", width="stretch"
+                )
+
+            st.session_state.use_ai_cover_letter = st.checkbox(
+                "AI-Powered Cover Letter",
+                value=st.session_state.use_ai_cover_letter,
+                help="Generate personalized cover letters using your LLM.",
+            )
 
     if save_byok_clicked:
         try:
@@ -701,6 +577,17 @@ def main() -> None:
             )
             with st.spinner("🔍 AI searching for jobs across platforms..."):
                 raw_jobs = search_jobs(active_filters)
+
+            # AI Enhance: if LLM is configured, enrich scraped data
+            if st.session_state.llm_config.is_configured:
+                with st.spinner("🤖 AI enriching job data (skills, salary, level)..."):
+                    try:
+                        raw_jobs = ai_enhance_jobs(
+                            raw_jobs,
+                            config=st.session_state.llm_config,
+                        )
+                    except Exception:
+                        pass  # Continue with unenhanced data if LLM fails
 
             # Apply application status overlay
             raw_jobs = ensure_application_columns(raw_jobs)
@@ -738,10 +625,50 @@ def main() -> None:
     # ══════════════════════════════════════════════════════════════════════
     if results_df.empty:
         st.info(
-            "👆 Fill in at least a keyword or location in the sidebar, "
-            "then click **AI Search Jobs** to find vacancies."
+            "Fill in at least a keyword or location in the sidebar, "
+            "then click **Search Jobs** to find vacancies."
         )
+        # Show AI-generated content even without search results
+        if "ai_generated_summary" in st.session_state:
+            st.divider()
+            st.subheader("AI-Generated Professional Summary")
+            st.text_area(
+                "Summary",
+                value=st.session_state["ai_generated_summary"],
+                height=150,
+                key="display_summary",
+            )
+        if "ai_generated_cv" in st.session_state:
+            st.divider()
+            st.subheader("AI-Generated CV")
+            st.text_area(
+                "CV",
+                value=st.session_state["ai_generated_cv"],
+                height=400,
+                key="display_cv",
+            )
+            st.download_button(
+                "Download CV",
+                data=st.session_state["ai_generated_cv"].encode("utf-8"),
+                file_name="ai_generated_cv.txt",
+                mime="text/plain",
+            )
         return
+
+    # Show AI-generated content above results
+    if "ai_generated_summary" in st.session_state:
+        with st.expander("AI-Generated Professional Summary", expanded=False):
+            st.text(st.session_state["ai_generated_summary"])
+    if "ai_generated_cv" in st.session_state:
+        with st.expander("AI-Generated CV", expanded=False):
+            st.text(st.session_state["ai_generated_cv"])
+            st.download_button(
+                "Download CV",
+                data=st.session_state["ai_generated_cv"].encode("utf-8"),
+                file_name="ai_generated_cv.txt",
+                mime="text/plain",
+                key="download_cv_results",
+            )
 
     _render_results_metrics(results_df, st.session_state.last_search_count)
 
@@ -839,6 +766,7 @@ def main() -> None:
                     applicant_name=applicant_name,
                     cv_summary=st.session_state.cv_analysis.experience_summary,
                     tone=selected_tone,
+                    custom_prompt=custom_cover_letter_prompt,
                     config=st.session_state.llm_config,
                 )
             else:
