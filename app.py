@@ -45,63 +45,127 @@ COVER_LETTER_TONES = ["formal", "concise", "confident"]
 _CUSTOM_CSS = """
 <style>
 /* ═══════════════════════════════════════════════════════════════════════
-   Sidebar styling — follows Streamlit's native theme automatically.
-   Light & dark mode work out-of-the-box via Streamlit config.
+   Design System: Executive Dashboard + Minimal & Direct
+   All colors follow Streamlit native theme variables.
    ═══════════════════════════════════════════════════════════════════════ */
 
-/* ── Section headers — no longer needed, using st.expander ── */
-/* Streamlit's expander handles its own styling */
+/* ── Sidebar: subtle gradient + clean spacing ── */
+section[data-testid="stSidebar"] {
+    border-right: 1px solid rgba(128, 128, 128, 0.15) !important;
+}
+
+/* ── Sidebar inputs: consistent sizing ── */
+section[data-testid="stSidebar"] input[type="text"],
+section[data-testid="stSidebar"] input[type="password"] {
+    border-radius: 8px !important;
+    padding: 0.45rem 0.7rem !important;
+    font-size: 0.85rem !important;
+    border: 1px solid rgba(128, 128, 128, 0.2) !important;
+    background: transparent !important;
+}
+section[data-testid="stSidebar"] input::placeholder {
+    opacity: 0.45 !important;
+}
+
+/* ── Select: rounded ── */
+section[data-testid="stSidebar"] [data-baseweb="select"] {
+    border-radius: 8px !important;
+}
+
+/* ── Buttons: consistent rounded corners ── */
+section[data-testid="stSidebar"] button {
+    border-radius: 8px !important;
+    font-weight: 500 !important;
+    transition: opacity 0.2s ease !important;
+}
+section[data-testid="stSidebar"] button[kind="primary"]:hover {
+    opacity: 0.88 !important;
+}
+section[data-testid="stSidebar"] button[kind="secondary"],
+section[data-testid="stSidebar"] button[kind="secondaryFormSubmit"] {
+    border: 1px solid rgba(128, 128, 128, 0.2) !important;
+}
+
+/* ── Expander: clean borders ── */
+section[data-testid="stSidebar"] .streamlit-expanderHeader {
+    border-radius: 8px !important;
+    border: 1px solid rgba(128, 128, 128, 0.15) !important;
+    font-weight: 500 !important;
+    font-size: 0.88rem !important;
+}
+section[data-testid="stSidebar"] .streamlit-expanderContent {
+    border: none !important;
+    padding-top: 0.5rem !important;
+}
 
 /* ── Caption ── */
 section[data-testid="stSidebar"] .stCaption {
     font-size: 0.75rem !important;
+    opacity: 0.65 !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   MAIN AREA
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── Main container: max width + padding ── */
+main .block-container {
+    max-width: 1200px !important;
+    padding-top: 2rem !important;
+    padding-bottom: 3rem !important;
+}
+
+/* ── Title: clean ── */
+h1 {
+    font-weight: 700 !important;
+    letter-spacing: -0.02em !important;
+    margin-bottom: 0.25rem !important;
+}
+
+/* ── Subheaders: uppercase tracking ── */
+h2, h3 {
+    font-weight: 600 !important;
+    letter-spacing: -0.01em !important;
+    margin-top: 2rem !important;
+}
+
+/* ── Metric cards: card style ── */
+[data-testid="stMetric"] {
+    background: rgba(128, 128, 128, 0.05);
+    border: 1px solid rgba(128, 128, 128, 0.12);
+    border-radius: 10px;
+    padding: 1rem 1.2rem !important;
+    margin: 0.25rem 0;
+}
+[data-testid="stMetric"] label {
+    font-size: 0.75rem !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.04em !important;
     opacity: 0.7 !important;
 }
-
-/* ── Inputs: clean borders ── */
-section[data-testid="stSidebar"] input[type="text"],
-section[data-testid="stSidebar"] input[type="password"] {
-    border-radius: 6px !important;
-    padding: 0.4rem 0.6rem !important;
-    font-size: 0.85rem !important;
-    border: 1px solid rgba(128, 128, 128, 0.25) !important;
-    background: transparent !important;
-}
-section[data-testid="stSidebar"] input::placeholder {
-    opacity: 0.5 !important;
+[data-testid="stMetric"] [data-testid="stMetricValue"] {
+    font-size: 1.6rem !important;
+    font-weight: 700 !important;
 }
 
-/* ── Select: clean border ── */
-section[data-testid="stSidebar"] [data-baseweb="select"] {
-    border-radius: 6px !important;
+/* ── DataFrame: clean borders ── */
+.stDataFrame {
+    border: 1px solid rgba(128, 128, 128, 0.15) !important;
+    border-radius: 10px !important;
+    overflow: hidden !important;
 }
 
-/* ── Primary button ── */
-section[data-testid="stSidebar"] button[kind="primary"] {
-    border-radius: 6px !important;
-    font-weight: 600 !important;
-    transition: opacity 0.2s !important;
-}
-section[data-testid="stSidebar"] button[kind="primary"]:hover {
-    opacity: 0.9 !important;
-}
-
-/* ── Secondary buttons ── */
-section[data-testid="stSidebar"] button[kind="secondary"],
-section[data-testid="stSidebar"] button[kind="secondaryFormSubmit"] {
-    border-radius: 6px !important;
+/* ── Download buttons: subtle ── */
+.stDownloadButton button {
+    border-radius: 8px !important;
     font-weight: 500 !important;
-    transition: opacity 0.2s !important;
-    border: 1px solid rgba(128, 128, 128, 0.25) !important;
 }
 
-/* ── Expander ── */
-section[data-testid="stSidebar"] .streamlit-expanderHeader {
-    border-radius: 6px !important;
-    border: 1px solid rgba(128, 128, 128, 0.2) !important;
-}
-section[data-testid="stSidebar"] .streamlit-expanderContent {
-    border: none !important;
+/* ── Expander in main area ── */
+main .streamlit-expanderHeader {
+    border-radius: 8px !important;
+    border: 1px solid rgba(128, 128, 128, 0.15) !important;
+    font-weight: 500 !important;
 }
 
 /* ── AI status badge ── */
@@ -109,7 +173,7 @@ section[data-testid="stSidebar"] .streamlit-expanderContent {
     display: inline-block;
     padding: 2px 8px;
     border-radius: 10px;
-    font-size: 0.7rem;
+    font-size: 0.68rem;
     font-weight: 600;
     letter-spacing: 0.03em;
     vertical-align: middle;
@@ -125,8 +189,11 @@ section[data-testid="stSidebar"] .streamlit-expanderContent {
     opacity: 0.6;
 }
 
-/* ── Scrollbar subtle ── */
-section[data-testid="stSidebar"] ::-webkit-scrollbar-thumb {
+/* ── Scrollbar ── */
+::-webkit-scrollbar {
+    width: 8px;
+}
+::-webkit-scrollbar-thumb {
     border-radius: 4px;
 }
 </style>
@@ -136,6 +203,24 @@ section[data-testid="stSidebar"] ::-webkit-scrollbar-thumb {
 def _inject_custom_css() -> None:
     """Inject the custom design system CSS into the Streamlit app."""
     st.markdown(_CUSTOM_CSS, unsafe_allow_html=True)
+
+
+def _toast(message: str, type: str = "info", duration: int = 4) -> None:
+    """Show a floating toast notification using Streamlit's native st.toast.
+
+    Args:
+        message: The notification text.
+        type: One of 'success', 'error', 'warning', 'info'.
+        duration: Auto-dismiss time in SECONDS (default 4).
+    """
+    icon_map = {
+        "success": "✅",
+        "error": "❌",
+        "warning": "⚠️",
+        "info": "ℹ️",
+    }
+    icon = icon_map.get(type, "ℹ️")
+    st.toast(message, icon=icon)
 
 
 def _parse_optional_float(value: str, field_label: str) -> float | None:
@@ -236,8 +321,8 @@ def main() -> None:
     _inject_custom_css()
     st.title("AI Job Vacancy Filter")
     st.caption(
-        "AI-powered job search across LinkedIn Indonesia. "
-        "Manual-assisted filtering and application preparation."
+        "Search real job listings on LinkedIn Indonesia. "
+        "Filter, score, and prepare your applications."
     )
 
     # ── Database init ───────────────────────────────────────────────────
@@ -413,11 +498,9 @@ def main() -> None:
                 portfolio_url=profile_portfolio,
             )
             save_profile(st.session_state.profile, DATABASE_PATH)
-            st.sidebar.success("Profile saved locally to SQLite.")
+            _toast("Profile saved to local database.", "success")
         except Exception:
-            st.sidebar.error(
-                "Could not save the profile to the local database. Please try again."
-            )
+            _toast("Could not save profile. Please try again.", "error")
 
     # ── CV upload handler ───────────────────────────────────────────────
     if (
@@ -430,17 +513,11 @@ def main() -> None:
                 cv_uploaded_file.getvalue(),
             )
             st.session_state.cv_file_name = cv_uploaded_file.name
-            st.sidebar.success("CV analyzed successfully.")
+            _toast("CV analyzed successfully.", "success")
         except ValueError as exc:
-            st.session_state.cv_analysis = CVAnalysis()
-            st.session_state.cv_file_name = ""
-            st.sidebar.error(str(exc))
+            _toast(str(exc), "error")
         except Exception:
-            st.session_state.cv_analysis = CVAnalysis()
-            st.session_state.cv_file_name = ""
-            st.sidebar.error(
-                "We could not read that CV file. Please try another PDF or DOCX."
-            )
+            _toast("Could not read that CV file. Please try another PDF or DOCX.", "error")
     elif cv_uploaded_file is None and st.session_state.cv_file_name:
         st.session_state.cv_analysis = CVAnalysis()
         st.session_state.cv_file_name = ""
@@ -451,16 +528,14 @@ def main() -> None:
                 st.session_state.profile,
                 st.session_state.cv_analysis,
             )
-            st.sidebar.success(
-                "Profile fields were filled from the uploaded CV when available."
-            )
+            _toast("Profile fields filled from CV.", "success")
         else:
-            st.sidebar.error("Upload a readable CV first before using CV details.")
+            _toast("Upload a readable CV first.", "warning")
 
     # ── AI Generate Summary handler ──────────────────────────────────
     if ai_summary_clicked:
         try:
-            with st.spinner("🤖 AI generating professional summary..."):
+            with st.spinner("AI generating professional summary..."):
                 summary = ai_generate_profile_summary(
                     name=st.session_state.profile.name or "Professional",
                     skills=", ".join(st.session_state.cv_analysis.skills) if st.session_state.cv_analysis.skills else "",
@@ -469,14 +544,14 @@ def main() -> None:
                     config=st.session_state.llm_config,
                 )
             st.session_state["ai_generated_summary"] = summary
-            st.sidebar.success("AI summary generated!")
+            _toast("AI summary generated!", "success")
         except Exception as exc:
-            st.sidebar.error(f"AI summary failed: {exc}")
+            _toast(f"AI summary failed: {exc}", "error")
 
     # ── AI Generate CV handler ───────────────────────────────────────
     if ai_cv_clicked:
         try:
-            with st.spinner("🤖 AI generating CV..."):
+            with st.spinner("AI generating CV..."):
                 cv_text = ai_generate_cv(
                     name=st.session_state.profile.name or "Professional",
                     email=st.session_state.profile.email,
@@ -488,9 +563,9 @@ def main() -> None:
                     config=st.session_state.llm_config,
                 )
             st.session_state["ai_generated_cv"] = cv_text
-            st.sidebar.success("AI CV generated!")
+            _toast("AI CV generated!", "success")
         except Exception as exc:
-            st.sidebar.error(f"AI CV generation failed: {exc}")
+            _toast(f"AI CV generation failed: {exc}", "error")
 
     # ── CV insights (sidebar) ───────────────────────────────────────────
     if st.session_state.cv_analysis.text:
@@ -555,9 +630,9 @@ def main() -> None:
                 model=byok_model.strip(),
             )
             save_llm_config(st.session_state.llm_config, DATABASE_PATH)
-            st.sidebar.success("AI config saved!")
+            _toast("AI config saved!", "success")
         except Exception:
-            st.sidebar.error("Could not save AI config.")
+            _toast("Could not save AI config.", "error")
 
     # ══════════════════════════════════════════════════════════════════════
     # AI SEARCH + FILTER + SCORE
@@ -575,12 +650,12 @@ def main() -> None:
                 posted_after=posted_after,
                 include_unknown_salary=include_unknown_salary,
             )
-            with st.spinner("🔍 AI searching for jobs across platforms..."):
+            with st.spinner("Searching for jobs across platforms..."):
                 raw_jobs = search_jobs(active_filters)
 
             # AI Enhance: if LLM is configured, enrich scraped data
             if st.session_state.llm_config.is_configured:
-                with st.spinner("🤖 AI enriching job data (skills, salary, level)..."):
+                with st.spinner("AI enriching job data (skills, salary, level)..."):
                     try:
                         raw_jobs = ai_enhance_jobs(
                             raw_jobs,
@@ -603,20 +678,13 @@ def main() -> None:
             st.session_state.last_search_count = len(raw_jobs)
 
             if scored.empty:
-                st.warning(
-                    "No jobs matched your filters. "
-                    "Try broadening your keyword or location."
-                )
+                _toast("No jobs matched your filters. Try broadening your search.", "warning", 6000)
             else:
-                st.success(
-                    f"Found {len(raw_jobs)} jobs — {len(scored)} matched your filters."
-                )
+                _toast(f"Found {len(raw_jobs)} jobs - {len(scored)} matched your filters.", "success")
         except ValueError as exc:
-            st.error(str(exc))
+            _toast(str(exc), "error", 6000)
         except Exception:
-            st.error(
-                "AI search failed. Check your internet connection and try again."
-            )
+            _toast("Search failed. Check your internet connection.", "error", 6000)
 
     results_df = st.session_state.results_df.copy()
 
@@ -628,7 +696,6 @@ def main() -> None:
             "Fill in at least a keyword or location in the sidebar, "
             "then click **Search Jobs** to find vacancies."
         )
-        # Show AI-generated content even without search results
         if "ai_generated_summary" in st.session_state:
             st.divider()
             st.subheader("AI-Generated Professional Summary")
@@ -672,8 +739,8 @@ def main() -> None:
 
     _render_results_metrics(results_df, st.session_state.last_search_count)
 
-    st.subheader("📋 Filtered Results")
-    st.dataframe(results_df, width="stretch", hide_index=False)
+    st.subheader("Filtered Results")
+    st.dataframe(results_df, use_container_width=True, hide_index=False)
 
     try:
         excel_bytes = dataframe_to_excel_bytes(results_df)
@@ -684,16 +751,16 @@ def main() -> None:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
     except Exception:
-        st.error("We could not prepare the Excel export right now.")
+        _toast("Could not prepare Excel export.", "error")
 
     # ══════════════════════════════════════════════════════════════════════
     # APPLICATION ASSISTANT
     # ══════════════════════════════════════════════════════════════════════
     st.divider()
-    st.subheader("📝 Application Assistant")
+    st.subheader("Application Assistant")
     st.caption(
-        "This flow only helps you prepare applications manually. "
-        "It does not auto-submit and does not scrape job sites."
+        "Prepare your application manually. "
+        "This does not auto-submit or scrape job sites."
     )
 
     job_option_indexes = list(results_df.index)
@@ -793,7 +860,7 @@ def main() -> None:
             results_df = st.session_state.results_df.copy()
             selected_job = results_df.loc[selected_job_index]
         except Exception:
-            st.error("We could not prepare the application draft right now.")
+            _toast("Could not prepare application draft.", "error")
 
     cover_letter_text = st.text_area(
         "Generated cover letter",
@@ -802,29 +869,34 @@ def main() -> None:
     )
     st.session_state.cover_letter_text = cover_letter_text
 
-    st.download_button(
-        "Download Cover Letter",
-        data=cover_letter_text.encode("utf-8"),
-        file_name="cover_letter.txt",
-        mime="text/plain",
-        disabled=not cover_letter_text.strip(),
-    )
+    # Action buttons in a row
+    action_col1, action_col2, action_col3 = st.columns([1, 1, 1])
+    with action_col1:
+        st.download_button(
+            "Download Cover Letter",
+            data=cover_letter_text.encode("utf-8"),
+            file_name="cover_letter.txt",
+            mime="text/plain",
+            disabled=not cover_letter_text.strip(),
+        )
 
     apply_url = str(selected_job.get("apply_url", "") or "").strip()
-    if apply_url:
-        st.link_button("Open Apply Link", url=apply_url)
-    else:
-        st.info("No apply link is available for this job.")
+    with action_col2:
+        if apply_url:
+            st.link_button("Open Apply Link", url=apply_url)
+        else:
+            st.info("No apply link available.")
 
-    if st.button("Mark as Submitted"):
-        try:
-            _sync_status_to_state(selected_job_index, "Submitted")
-            _persist_selected_job_status(selected_job, "Submitted")
-            st.success("Application status updated to Submitted.")
-        except (ValueError, IndexError):
-            st.error("We could not update the application status for that job.")
-        except Exception:
-            st.error("We could not update the application status right now.")
+    with action_col3:
+        if st.button("Mark as Submitted"):
+            try:
+                _sync_status_to_state(selected_job_index, "Submitted")
+                _persist_selected_job_status(selected_job, "Submitted")
+                _toast("Application status updated to Submitted.", "success")
+            except (ValueError, IndexError):
+                _toast("Could not update application status.", "error")
+            except Exception:
+                _toast("Could not update application status.", "error")
 
 
 if __name__ == "__main__":
