@@ -25,16 +25,26 @@ SKILL_ALIASES: dict[str, tuple[str, ...]] = {
     "Node.js": ("node.js", "nodejs", "node js"),
 }
 
-SKILL_PATTERNS: dict[str, tuple[re.Pattern[str], ...]] = {
-    canonical: tuple(
-        re.compile(
-            rf"(?<![A-Za-z0-9]){re.escape(alias).replace(r'\ ', r'\s+')}(?![A-Za-z0-9])",
-            flags=re.IGNORECASE,
-        )
-        for alias in aliases
-    )
-    for canonical, aliases in SKILL_ALIASES.items()
-}
+def _build_skill_patterns(
+    aliases_map: dict[str, tuple[str, ...]],
+) -> dict[str, tuple[re.Pattern[str], ...]]:
+    """Build compiled regex patterns for known skill aliases."""
+    result: dict[str, tuple[re.Pattern[str], ...]] = {}
+    for canonical, aliases in aliases_map.items():
+        patterns: list[re.Pattern[str]] = []
+        for alias in aliases:
+            escaped = re.escape(alias).replace(r"\ ", r"\s+")
+            patterns.append(
+                re.compile(
+                    rf"(?<![A-Za-z0-9]){escaped}(?![A-Za-z0-9])",
+                    flags=re.IGNORECASE,
+                )
+            )
+        result[canonical] = tuple(patterns)
+    return result
+
+
+SKILL_PATTERNS = _build_skill_patterns(SKILL_ALIASES)
 
 
 @dataclass(slots=True)

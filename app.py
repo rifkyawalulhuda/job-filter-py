@@ -1,4 +1,4 @@
-"""Streamlit UI for the job-vacancy-filter application."""
+"""Streamlit UI for the AI-powered job-vacancy-filter application."""
 
 from __future__ import annotations
 
@@ -16,17 +16,301 @@ from src.applications import (
 from src.cover_letter import generate_cover_letter
 from src.cv_parser import CVAnalysis, analyze_cv_bytes, match_cv_skills_to_job
 from src.database import DEFAULT_DATABASE_PATH, init_database
-from src.data_loader import load_jobs, normalize_jobs
 from src.export_excel import dataframe_to_excel_bytes
 from src.filters import JobFilters, apply_filters
-from src.paste_jobs import parse_pasted_jobs
+from src.job_search import search_jobs
 from src.profile import UserProfile, load_profile, save_profile
 from src.scoring import calculate_match_score
+from src.llm import (
+    LLMConfig,
+    load_llm_config,
+    save_llm_config,
+    generate_ai_cover_letter,
+)
 
 DATABASE_PATH = DEFAULT_DATABASE_PATH
 WORK_MODE_OPTIONS = ["Any", "remote", "hybrid", "onsite"]
-JOB_LEVEL_OPTIONS = ["Any", "internship", "entry", "junior", "mid", "senior", "lead", "manager"]
+JOB_LEVEL_OPTIONS = [
+    "Any", "internship", "entry", "junior", "mid", "senior", "lead", "manager",
+]
 COVER_LETTER_TONES = ["formal", "concise", "confident"]
+
+# ── Design System (Swiss Modernism + Job Board palette) ────────────────────
+# Color: Professional Blue (#0369A1) + Light Blue (#F0F9FF)
+# Style: Flat Design, mathematical spacing, single accent
+
+_CUSTOM_CSS = """
+<style>
+/* ═══════════════════════════════════════════════════════════════════════
+   Design System: Swiss Modernism + Professional Blue
+   Palette: Financial Dashboard (OLED dark) + Job Board blue
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── Light mode ───────────────────────────────────────────────────── */
+:root,
+body.light-theme {
+    --primary: #0369A1;
+    --primary-hover: #0284C7;
+    --primary-bg: #F0F9FF;
+    --accent: #16A34A;
+    --accent-bg: #DCFCE7;
+    --text: #0C4A6E;
+    --text-heading: #0369A1;
+    --text-muted: #64748B;
+    --border: #BAE6FD;
+    --border-subtle: #E7EFF5;
+    --input-bg: #FFFFFF;
+    --sidebar-bg-start: #F0F9FF;
+    --sidebar-bg-end: #FFFFFF;
+    --badge-inactive-bg: #F1F5F9;
+    --focus-ring: rgba(3, 105, 161, 0.15);
+    --divider: #BAE6FD;
+    --btn-text: #FFFFFF;
+}
+
+/* ── Dark mode ────────────────────────────────────────────────────── */
+body.dark-theme {
+    --primary: #38BDF8;
+    --primary-hover: #7DD3FC;
+    --primary-bg: rgba(14, 165, 233, 0.1);
+    --accent: #4ADE80;
+    --accent-bg: rgba(74, 222, 128, 0.15);
+    --text: #E2E8F0;
+    --text-heading: #BAE6FD;
+    --text-muted: #94A3B8;
+    --border: #1E3A5F;
+    --border-subtle: #1E293B;
+    --input-bg: #1E293B;
+    --sidebar-bg-start: #0B1623;
+    --sidebar-bg-end: #0F1D2E;
+    --badge-inactive-bg: #1E293B;
+    --focus-ring: rgba(56, 189, 248, 0.25);
+    --divider: #1E3A5F;
+    --btn-text: #0F172A;
+}
+
+/* ═════════════════════════════════════════════════════════════════════
+   FORCE DARK MODE — override Streamlit's internal variables
+   ═════════════════════════════════════════════════════════════════════ */
+body.dark-theme section[data-testid="stSidebar"] {
+    --sidebar-background-color: #0B1623 !important;
+    background: linear-gradient(180deg, #0B1623 0%, #0F1D2E 100%) !important;
+    background-color: #0B1623 !important;
+    border-right: 1px solid #1E293B !important;
+}
+body.dark-theme section[data-testid="stSidebar"] * {
+    color-scheme: dark !important;
+}
+body.dark-theme section[data-testid="stSidebar"] .st-emotion-cache-6qob1r,
+body.dark-theme section[data-testid="stSidebar"] .st-emotion-cache-1cypcdb,
+body.dark-theme section[data-testid="stSidebar"] [data-testid="stSidebarUserContent"] {
+    background: transparent !important;
+}
+
+/* ── Sidebar section headers ── */
+section[data-testid="stSidebar"] .stMarkdown h2 {
+    font-size: 0.85rem !important;
+    font-weight: 600 !important;
+    letter-spacing: 0.04em !important;
+    text-transform: uppercase !important;
+    color: var(--text-heading) !important;
+    margin-top: 1.25rem !important;
+    margin-bottom: 0.5rem !important;
+    padding-bottom: 0.3rem !important;
+    border-bottom: 2px solid var(--border) !important;
+}
+body.dark-theme section[data-testid="stSidebar"] .stMarkdown h2 {
+    color: #BAE6FD !important;
+    border-bottom-color: #1E3A5F !important;
+}
+
+/* ── Text ── */
+section[data-testid="stSidebar"] .stMarkdown p,
+section[data-testid="stSidebar"] .stMarkdown span {
+    color: var(--text) !important;
+}
+body.dark-theme section[data-testid="stSidebar"] .stMarkdown p,
+body.dark-theme section[data-testid="stSidebar"] .stMarkdown span,
+body.dark-theme section[data-testid="stSidebar"] label {
+    color: #E2E8F0 !important;
+}
+body.dark-theme section[data-testid="stSidebar"] .stCaption,
+body.dark-theme section[data-testid="stSidebar"] .stCaption p {
+    color: #94A3B8 !important;
+}
+
+/* ── Inputs ── */
+section[data-testid="stSidebar"] input[type="text"],
+section[data-testid="stSidebar"] input[type="password"] {
+    border: 1px solid var(--border) !important;
+    border-radius: 6px !important;
+    padding: 0.4rem 0.6rem !important;
+    font-size: 0.85rem !important;
+    background: var(--input-bg) !important;
+    color: var(--text) !important;
+}
+body.dark-theme section[data-testid="stSidebar"] input[type="text"],
+body.dark-theme section[data-testid="stSidebar"] input[type="password"] {
+    background: #1E293B !important;
+    border-color: #1E3A5F !important;
+    color: #E2E8F0 !important;
+}
+body.dark-theme section[data-testid="stSidebar"] input::placeholder {
+    color: #64748B !important;
+    opacity: 0.7 !important;
+}
+section[data-testid="stSidebar"] input:focus {
+    box-shadow: 0 0 0 2px var(--focus-ring) !important;
+    outline: none !important;
+}
+body.dark-theme section[data-testid="stSidebar"] input:focus {
+    border-color: #38BDF8 !important;
+    box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.25) !important;
+}
+
+/* ── Select ── */
+body.dark-theme section[data-testid="stSidebar"] [data-baseweb="select"] {
+    background: #1E293B !important;
+}
+body.dark-theme section[data-testid="stSidebar"] [data-baseweb="select"] * {
+    color: #E2E8F0 !important;
+}
+
+/* ── Primary button ── */
+section[data-testid="stSidebar"] button[kind="primary"] {
+    background: var(--primary) !important;
+    border: none !important;
+    border-radius: 6px !important;
+    color: var(--btn-text) !important;
+    font-weight: 600 !important;
+    transition: background 0.2s !important;
+}
+section[data-testid="stSidebar"] button[kind="primary"]:hover {
+    background: var(--primary-hover) !important;
+}
+
+/* ── Secondary buttons ── */
+section[data-testid="stSidebar"] button[kind="secondary"],
+section[data-testid="stSidebar"] button[kind="secondaryFormSubmit"] {
+    border: 1px solid var(--border) !important;
+    border-radius: 6px !important;
+    color: var(--primary) !important;
+    background: transparent !important;
+    font-weight: 500 !important;
+    transition: all 0.2s !important;
+}
+body.dark-theme section[data-testid="stSidebar"] button[kind="secondary"],
+body.dark-theme section[data-testid="stSidebar"] button[kind="secondaryFormSubmit"] {
+    border-color: #1E3A5F !important;
+    color: #38BDF8 !important;
+}
+section[data-testid="stSidebar"] button[kind="secondary"]:hover,
+section[data-testid="stSidebar"] button[kind="secondaryFormSubmit"]:hover {
+    border-color: var(--primary) !important;
+    background: var(--primary-bg) !important;
+}
+
+/* ── Divider ── */
+section[data-testid="stSidebar"] hr {
+    border-color: var(--divider) !important;
+}
+
+/* ── Checkbox ── */
+body.dark-theme section[data-testid="stSidebar"] .stCheckbox label {
+    color: #E2E8F0 !important;
+}
+
+/* ── Expander ── */
+body.dark-theme section[data-testid="stSidebar"] .streamlit-expanderHeader {
+    background: #1E293B !important;
+    border-color: #1E3A5F !important;
+    color: #94A3B8 !important;
+}
+body.dark-theme section[data-testid="stSidebar"] .streamlit-expanderHeader svg {
+    fill: #94A3B8 !important;
+}
+body.dark-theme section[data-testid="stSidebar"] .streamlit-expanderContent {
+    background: transparent !important;
+}
+
+/* ── Status badge ── */
+.ai-status-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    vertical-align: middle;
+    margin-left: 6px;
+}
+.ai-status-active { background: var(--accent-bg); color: var(--accent); }
+.ai-status-inactive { background: var(--badge-inactive-bg); color: var(--text-muted); }
+
+/* ── File uploader ── */
+body.dark-theme section[data-testid="stSidebar"] [data-testid="stFileUploader"] {
+    background: #1E293B !important;
+    border-color: #1E3A5F !important;
+}
+body.dark-theme section[data-testid="stSidebar"] [data-testid="stFileUploader"] * {
+    color: #E2E8F0 !important;
+}
+body.dark-theme section[data-testid="stSidebar"] [data-testid="stFileUploader"] small {
+    color: #94A3B8 !important;
+}
+
+/* ── Scrollbar ── */
+body.dark-theme section[data-testid="stSidebar"] ::-webkit-scrollbar-track {
+    background: #0B1623 !important;
+}
+body.dark-theme section[data-testid="stSidebar"] ::-webkit-scrollbar-thumb {
+    background: #1E3A5F !important;
+    border-radius: 4px !important;
+}
+
+/* ── Main area fixes ── */
+body.dark-theme .stDataFrame {
+    border-color: #1E293B !important;
+}
+body.dark-theme .stDownloadButton button {
+    background: transparent !important;
+    border-color: #1E3A5F !important;
+    color: #38BDF8 !important;
+}
+body.dark-theme .stDownloadButton button:hover {
+    border-color: #38BDF8 !important;
+    background: rgba(14, 165, 233, 0.1) !important;
+}
+</style>
+
+<script>
+(function(){
+    function applyTheme() {
+        var mqDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        var sidebar = document.querySelector('section[data-testid="stSidebar"]');
+        var sidebarBg = sidebar ? getComputedStyle(sidebar).backgroundColor : '';
+        /* Parse RGB values — if dark, channel values are low */
+        var nums = sidebarBg.match(/\\d+/g);
+        var avg = nums ? nums.reduce(function(a,b){return +a+ +b;},0)/nums.length : 255;
+        var isStreamlitDark = avg < 80;
+        var isDark = mqDark || isStreamlitDark;
+        document.body.classList.toggle('dark-theme', isDark);
+        document.body.classList.toggle('light-theme', !isDark);
+    }
+    applyTheme();
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
+    new MutationObserver(applyTheme).observe(document.body, {attributes: true, attributeFilter: ['class']});
+    setTimeout(applyTheme, 300);
+    setTimeout(applyTheme, 800);
+    setTimeout(applyTheme, 2000);
+})();
+</script>
+"""
+
+
+def _inject_custom_css() -> None:
+    """Inject the custom design system CSS into the Streamlit app."""
+    st.markdown(_CUSTOM_CSS, unsafe_allow_html=True)
 
 
 def _parse_optional_float(value: str, field_label: str) -> float | None:
@@ -38,27 +322,6 @@ def _parse_optional_float(value: str, field_label: str) -> float | None:
         return float(cleaned)
     except ValueError as exc:
         raise ValueError(f"{field_label} must be a valid number.") from exc
-
-
-def _load_jobs_dataframe(uploaded_file: object | None) -> pd.DataFrame:
-    """Load job data and ensure application tracking columns exist."""
-    jobs = load_jobs(uploaded_file=uploaded_file)
-    jobs = ensure_application_columns(jobs)
-    return apply_saved_application_statuses(jobs, path=DATABASE_PATH)
-
-
-def _load_pasted_jobs_dataframe(pasted_text: str) -> pd.DataFrame:
-    """Parse pasted lowongan text and ensure application tracking columns exist."""
-    jobs = parse_pasted_jobs(pasted_text)
-    jobs = ensure_application_columns(jobs)
-    return apply_saved_application_statuses(jobs, path=DATABASE_PATH)
-
-
-def _prepare_pasted_preview_dataframe(dataframe: pd.DataFrame) -> pd.DataFrame:
-    """Normalize an editable pasted-jobs preview DataFrame."""
-    normalized = normalize_jobs(dataframe)
-    normalized = ensure_application_columns(normalized)
-    return apply_saved_application_statuses(normalized, path=DATABASE_PATH)
 
 
 def _merge_profile_with_cv(profile: UserProfile, analysis: CVAnalysis) -> UserProfile:
@@ -74,7 +337,6 @@ def _merge_profile_with_cv(profile: UserProfile, analysis: CVAnalysis) -> UserPr
 
 def _build_job_filters(
     keyword: str,
-    company: str,
     location: str,
     work_mode: str,
     job_level: str,
@@ -88,7 +350,6 @@ def _build_job_filters(
     skills = [skill.strip() for skill in skills_text.split(",") if skill.strip()]
     return JobFilters(
         keyword=keyword,
-        company=company,
         location=location,
         work_mode=work_mode,
         job_level=job_level,
@@ -110,12 +371,6 @@ def _format_job_option(row: pd.Series) -> str:
 
 def _sync_status_to_state(row_index: int, status: str) -> None:
     """Apply a status update to stored DataFrames in session state."""
-    if "jobs_df" in st.session_state:
-        st.session_state.jobs_df = update_application_status(
-            st.session_state.jobs_df,
-            row_index,
-            status,
-        )
     if "results_df" in st.session_state and row_index in st.session_state.results_df.index:
         st.session_state.results_df = update_application_status(
             st.session_state.results_df,
@@ -145,108 +400,167 @@ def _render_results_metrics(results_df: pd.DataFrame, total_jobs: int) -> None:
         average_score = float(results_df["match_score"].mean())
 
     col1, col2, col3 = st.columns(3)
-    col1.metric("Total jobs loaded", total_jobs)
-    col2.metric("Results found", len(results_df))
-    col3.metric("Average match score", f"{average_score:.1f}")
+    col1.metric("Results found", len(results_df))
+    col2.metric("Average match score", f"{average_score:.1f}")
+    col3.metric("Total searched", total_jobs)
 
 
 def main() -> None:
     """Run the Streamlit app."""
-    st.set_page_config(page_title="Job Vacancy Filter", layout="wide")
-    st.title("Job Vacancy Filter")
-    st.caption("Manual-assisted job filtering and application preparation. No auto-submit, scraping, or CAPTCHA bypass.")
+    st.set_page_config(page_title="AI Job Vacancy Filter", layout="wide")
+    _inject_custom_css()
+    st.title("AI Job Vacancy Filter")
+    st.caption(
+        "AI-powered job search across LinkedIn Indonesia. "
+        "Manual-assisted filtering and application preparation."
+    )
+
+    # ── Database init ───────────────────────────────────────────────────
     try:
         init_database(DATABASE_PATH)
     except Exception:
-        st.error("We could not initialize the local application database. Please check file permissions and try again.")
+        st.error(
+            "We could not initialize the local application database. "
+            "Please check file permissions and try again."
+        )
         return
 
-    if "profile" not in st.session_state:
-        try:
-            st.session_state.profile = load_profile(DATABASE_PATH)
-        except Exception:
-            st.session_state.profile = UserProfile()
-            st.warning("We could not load the saved profile from the local database, so the form started empty.")
-    if "jobs_df" not in st.session_state:
-        st.session_state.jobs_df = pd.DataFrame()
-    if "results_df" not in st.session_state:
-        st.session_state.results_df = pd.DataFrame()
-    if "cover_letter_text" not in st.session_state:
-        st.session_state.cover_letter_text = ""
-    if "selected_job_index" not in st.session_state:
-        st.session_state.selected_job_index = None
-    if "data_source_name" not in st.session_state:
-        st.session_state.data_source_name = None
-    if "pasted_jobs_df" not in st.session_state:
-        st.session_state.pasted_jobs_df = pd.DataFrame()
-    if "pasted_jobs_text" not in st.session_state:
-        st.session_state.pasted_jobs_text = ""
-    if "pasted_jobs_preview_df" not in st.session_state:
-        st.session_state.pasted_jobs_preview_df = pd.DataFrame()
-    if "cv_analysis" not in st.session_state:
-        st.session_state.cv_analysis = CVAnalysis()
-    if "cv_file_name" not in st.session_state:
-        st.session_state.cv_file_name = ""
-    if "cover_letter_tone" not in st.session_state:
-        st.session_state.cover_letter_tone = "formal"
-    if "cover_letter_custom_prompt" not in st.session_state:
-        st.session_state.cover_letter_custom_prompt = ""
+    # ── Session state ───────────────────────────────────────────────────
+    defaults = {
+        "profile": None,
+        "results_df": pd.DataFrame(),
+        "cover_letter_text": "",
+        "selected_job_index": None,
+        "cv_analysis": CVAnalysis(),
+        "cv_file_name": "",
+        "cover_letter_tone": "formal",
+        "cover_letter_custom_prompt": "",
+        "last_search_count": 0,
+        "llm_config": None,
+        "use_ai_cover_letter": False,
+    }
+    for key, default in defaults.items():
+        if key not in st.session_state:
+            if key == "profile":
+                try:
+                    st.session_state.profile = load_profile(DATABASE_PATH)
+                except Exception:
+                    st.session_state.profile = UserProfile()
+                    st.warning(
+                        "We could not load the saved profile from the local database, "
+                        "so the form started empty."
+                    )
+            elif key == "llm_config":
+                try:
+                    st.session_state.llm_config = load_llm_config(DATABASE_PATH)
+                except Exception:
+                    st.session_state.llm_config = LLMConfig()
+            else:
+                st.session_state[key] = default
 
+    # ══════════════════════════════════════════════════════════════════════
+    # SIDEBAR
+    # ══════════════════════════════════════════════════════════════════════
     with st.sidebar:
-        st.header("Data Source")
-        uploaded_file = st.file_uploader(
-            "Upload CSV or Excel",
-            type=["csv", "xlsx", "xls"],
-            key="jobs_file_uploader",
-        )
-        pasted_jobs_text = st.text_area(
-            "Paste lowongan text",
-            value=st.session_state.pasted_jobs_text,
-            height=180,
-            help=(
-                "Pisahkan setiap lowongan dengan satu baris kosong. Anda bisa paste blok teks biasa "
-                "atau format berlabel seperti Company:, Location:, Skills:, Apply URL:."
-            ),
-        )
-        import_pasted_jobs_clicked = st.button("Use Pasted Jobs", width="stretch")
-        clear_pasted_jobs_clicked = st.button("Clear Pasted Jobs", width="stretch")
+        # ── Search Section ───────────────────────────────────────────────
+        st.markdown("## Search Filters")
+        st.caption("Find jobs on LinkedIn Indonesia")
 
-        st.header("Filters")
-        keyword = st.text_input("Keyword / Job title")
-        company = st.text_input("Company")
-        location = st.text_input("Location")
-        work_mode = st.selectbox("Work mode", WORK_MODE_OPTIONS)
-        job_level = st.selectbox("Job level", JOB_LEVEL_OPTIONS)
-        minimum_salary_text = st.text_input("Minimum salary")
-        maximum_salary_text = st.text_input("Maximum salary")
-        skills_text = st.text_input("Skills comma-separated")
-        posted_after = st.date_input("Posted after", value=None)
-        include_unknown_salary = st.checkbox("Include jobs with unknown salary", value=True)
-        search_clicked = st.button("Search", width="stretch")
+        keyword = st.text_input(
+            "Keyword / Job title",
+            placeholder="e.g. Python Developer",
+            label_visibility="collapsed",
+        )
+        location = st.text_input(
+            "Location",
+            placeholder="e.g. Jakarta",
+            label_visibility="collapsed",
+        )
+
+        col1, col2 = st.columns(2)
+        with col1:
+            work_mode = st.selectbox(
+                "Work mode", WORK_MODE_OPTIONS, label_visibility="collapsed"
+            )
+        with col2:
+            job_level = st.selectbox(
+                "Job level", JOB_LEVEL_OPTIONS, label_visibility="collapsed"
+            )
+
+        skills_text = st.text_input(
+            "Skills",
+            placeholder="Python, React, Docker",
+            label_visibility="collapsed",
+        )
+
+        with st.expander("Salary & Date", expanded=False):
+            minimum_salary_text = st.text_input("Minimum salary")
+            maximum_salary_text = st.text_input("Maximum salary")
+            posted_after = st.date_input("Posted after", value=None)
+            include_unknown_salary = st.checkbox(
+                "Include unknown salary", value=True
+            )
+
+        ai_search_clicked = st.button(
+            "Search Jobs",
+            width="stretch",
+            type="primary",
+            use_container_width=True,
+            help="Search LinkedIn Indonesia for matching jobs.",
+        )
 
         st.divider()
-        st.header("Profile")
+
+        # ── Profile Section ──────────────────────────────────────────────
+        st.markdown("## Profile")
         with st.form("profile_form"):
-            profile_name = st.text_input("Name", value=st.session_state.profile.name)
-            profile_email = st.text_input("Email", value=st.session_state.profile.email)
-            profile_phone = st.text_input("Phone", value=st.session_state.profile.phone)
+            profile_name = st.text_input(
+                "Name",
+                value=st.session_state.profile.name,
+                label_visibility="collapsed",
+                placeholder="Your name",
+            )
+            profile_email = st.text_input(
+                "Email",
+                value=st.session_state.profile.email,
+                label_visibility="collapsed",
+                placeholder="your@email.com",
+            )
+            profile_phone = st.text_input(
+                "Phone",
+                value=st.session_state.profile.phone,
+                label_visibility="collapsed",
+                placeholder="+62...",
+            )
             profile_linkedin = st.text_input(
                 "LinkedIn URL",
                 value=st.session_state.profile.linkedin_url,
+                label_visibility="collapsed",
+                placeholder="linkedin.com/in/...",
             )
             profile_portfolio = st.text_input(
                 "Portfolio URL",
                 value=st.session_state.profile.portfolio_url,
+                label_visibility="collapsed",
+                placeholder="yourportfolio.com",
             )
-            save_profile_clicked = st.form_submit_button("Save Profile", width="stretch")
+            save_profile_clicked = st.form_submit_button(
+                "Save Profile", width="stretch"
+            )
 
         cv_uploaded_file = st.file_uploader(
-            "Upload CV",
+            "Upload CV (PDF/DOCX)",
             type=["pdf", "docx"],
             key="cv_uploader",
+            label_visibility="collapsed",
         )
-        use_cv_profile_clicked = st.button("Use CV Details in Profile", width="stretch")
+        use_cv_profile_clicked = st.button(
+            "Use CV Details in Profile",
+            width="stretch",
+            disabled=cv_uploaded_file is None,
+        )
 
+    # ── Profile save handler ────────────────────────────────────────────
     if save_profile_clicked:
         try:
             st.session_state.profile = UserProfile(
@@ -259,9 +573,15 @@ def main() -> None:
             save_profile(st.session_state.profile, DATABASE_PATH)
             st.sidebar.success("Profile saved locally to SQLite.")
         except Exception:
-            st.sidebar.error("Could not save the profile to the local database. Please try again.")
+            st.sidebar.error(
+                "Could not save the profile to the local database. Please try again."
+            )
 
-    if cv_uploaded_file is not None and st.session_state.cv_file_name != cv_uploaded_file.name:
+    # ── CV upload handler ───────────────────────────────────────────────
+    if (
+        cv_uploaded_file is not None
+        and st.session_state.cv_file_name != cv_uploaded_file.name
+    ):
         try:
             st.session_state.cv_analysis = analyze_cv_bytes(
                 cv_uploaded_file.name,
@@ -276,7 +596,9 @@ def main() -> None:
         except Exception:
             st.session_state.cv_analysis = CVAnalysis()
             st.session_state.cv_file_name = ""
-            st.sidebar.error("We could not read that CV file. Please try another PDF or DOCX.")
+            st.sidebar.error(
+                "We could not read that CV file. Please try another PDF or DOCX."
+            )
     elif cv_uploaded_file is None and st.session_state.cv_file_name:
         st.session_state.cv_analysis = CVAnalysis()
         st.session_state.cv_file_name = ""
@@ -287,118 +609,87 @@ def main() -> None:
                 st.session_state.profile,
                 st.session_state.cv_analysis,
             )
-            st.sidebar.success("Profile fields were filled from the uploaded CV when available.")
+            st.sidebar.success(
+                "Profile fields were filled from the uploaded CV when available."
+            )
         else:
             st.sidebar.error("Upload a readable CV first before using CV details.")
 
-    st.session_state.pasted_jobs_text = pasted_jobs_text
-    if clear_pasted_jobs_clicked:
-        st.session_state.pasted_jobs_df = pd.DataFrame()
-        st.session_state.pasted_jobs_preview_df = pd.DataFrame()
-        st.session_state.pasted_jobs_text = ""
-        if uploaded_file is None:
-            st.session_state.data_source_name = None
-        st.sidebar.success("Pasted jobs cleared.")
-
-    if import_pasted_jobs_clicked:
-        try:
-            st.session_state.pasted_jobs_preview_df = _load_pasted_jobs_dataframe(pasted_jobs_text)
-            st.sidebar.success(
-                f"Parsed {len(st.session_state.pasted_jobs_preview_df)} pasted lowongan. Review and edit the preview below, then apply it."
-            )
-        except ValueError as exc:
-            st.sidebar.error(str(exc))
-        except Exception:
-            st.sidebar.error("We could not parse the pasted lowongan text. Please try a cleaner format.")
-
-    if uploaded_file is not None:
-        data_source_name = uploaded_file.name
-    elif not st.session_state.pasted_jobs_df.empty:
-        data_source_name = "pasted_jobs"
-    else:
-        data_source_name = "data/sample_jobs.csv"
-
-    if not st.session_state.pasted_jobs_preview_df.empty:
-        st.subheader("Pasted Jobs Preview")
-        st.caption("Review and edit parsed lowongan before using them as the active data source.")
-        edited_preview_df = st.data_editor(
-            st.session_state.pasted_jobs_preview_df,
-            width="stretch",
-            num_rows="dynamic",
-            hide_index=True,
-            key="pasted_jobs_preview_editor",
-        )
-        preview_actions_col1, preview_actions_col2 = st.columns(2)
-        apply_pasted_preview_clicked = preview_actions_col1.button(
-            "Apply Edited Pasted Jobs",
-            width="stretch",
-        )
-        discard_pasted_preview_clicked = preview_actions_col2.button(
-            "Discard Preview",
-            width="stretch",
-        )
-
-        if discard_pasted_preview_clicked:
-            st.session_state.pasted_jobs_preview_df = pd.DataFrame()
-            st.success("Pasted jobs preview discarded.")
-        elif apply_pasted_preview_clicked:
-            try:
-                st.session_state.pasted_jobs_df = _prepare_pasted_preview_dataframe(edited_preview_df)
-                st.session_state.pasted_jobs_preview_df = st.session_state.pasted_jobs_df.copy()
-                st.session_state.jobs_df = st.session_state.pasted_jobs_df.copy()
-                st.session_state.results_df = pd.DataFrame()
-                st.session_state.cover_letter_text = ""
-                st.session_state.selected_job_index = None
-                st.session_state.data_source_name = "pasted_jobs"
-                data_source_name = "pasted_jobs"
-                st.success(
-                    f"Using {len(st.session_state.pasted_jobs_df)} edited pasted lowongan as the active data source."
-                )
-            except ValueError as exc:
-                st.error(str(exc))
-            except Exception:
-                st.error("We could not apply the edited pasted jobs. Please review the preview values and try again.")
-
-    if data_source_name == "pasted_jobs":
-        st.session_state.jobs_df = st.session_state.pasted_jobs_df.copy()
-    elif st.session_state.data_source_name != data_source_name or st.session_state.jobs_df.empty:
-        try:
-            st.session_state.jobs_df = _load_jobs_dataframe(uploaded_file)
-            st.session_state.results_df = pd.DataFrame()
-            st.session_state.cover_letter_text = ""
-            st.session_state.selected_job_index = None
-            st.session_state.data_source_name = data_source_name
-        except ValueError as exc:
-            st.error(str(exc))
-            return
-        except Exception:
-            st.error("We could not load the job data. Please check your file and try again.")
-            return
-
-    st.caption(f"Active data source: `{data_source_name}`")
-
+    # ── CV insights (sidebar) ───────────────────────────────────────────
     if st.session_state.cv_analysis.text:
         with st.sidebar:
-            st.subheader("CV Insights")
+            st.divider()
+            st.markdown("## CV Insights")
             if st.session_state.cv_analysis.name:
-                st.write(f"Name: {st.session_state.cv_analysis.name}")
+                st.caption(f"**Name:** {st.session_state.cv_analysis.name}")
             if st.session_state.cv_analysis.email:
-                st.write(f"Email: {st.session_state.cv_analysis.email}")
+                st.caption(f"**Email:** {st.session_state.cv_analysis.email}")
             if st.session_state.cv_analysis.phone:
-                st.write(f"Phone: {st.session_state.cv_analysis.phone}")
-            if st.session_state.cv_analysis.linkedin_url:
-                st.write(f"LinkedIn: {st.session_state.cv_analysis.linkedin_url}")
-            if st.session_state.cv_analysis.portfolio_url:
-                st.write(f"Portfolio: {st.session_state.cv_analysis.portfolio_url}")
+                st.caption(f"**Phone:** {st.session_state.cv_analysis.phone}")
             if st.session_state.cv_analysis.skills:
-                st.write("Detected skills:")
-                st.caption(", ".join(st.session_state.cv_analysis.skills))
+                st.caption("**Skills:** " + ", ".join(st.session_state.cv_analysis.skills))
 
-    if search_clicked or st.session_state.results_df.empty:
+    # ── BYOK Panel ──────────────────────────────────────────────────────
+    with st.sidebar:
+        st.divider()
+        ai_status = "Active" if st.session_state.llm_config.is_configured else "Inactive"
+        ai_badge = "ai-status-active" if st.session_state.llm_config.is_configured else "ai-status-inactive"
+        st.markdown(
+            f"## AI Settings "
+            f'<span class="ai-status-badge {ai_badge}">{ai_status}</span>',
+            unsafe_allow_html=True,
+        )
+        st.caption("Bring Your Own Key")
+
+        with st.form("byok_form"):
+            byok_api_base = st.text_input(
+                "API Base URL",
+                value=st.session_state.llm_config.api_base,
+                label_visibility="collapsed",
+                placeholder="https://dough.id/api/v1",
+            )
+            byok_api_key = st.text_input(
+                "API Key",
+                value=st.session_state.llm_config.api_key,
+                type="password",
+                label_visibility="collapsed",
+                placeholder="sk-...",
+            )
+            byok_model = st.text_input(
+                "Model",
+                value=st.session_state.llm_config.model,
+                label_visibility="collapsed",
+                placeholder="mimo/mimo-v2.5",
+            )
+            save_byok_clicked = st.form_submit_button(
+                "Save AI Config", width="stretch"
+            )
+
+        st.session_state.use_ai_cover_letter = st.checkbox(
+            "AI-Powered Cover Letter",
+            value=st.session_state.use_ai_cover_letter,
+            help="Generate personalized cover letters using your LLM.",
+        )
+
+    if save_byok_clicked:
+        try:
+            st.session_state.llm_config = LLMConfig(
+                api_base=byok_api_base.strip(),
+                api_key=byok_api_key.strip(),
+                model=byok_model.strip(),
+            )
+            save_llm_config(st.session_state.llm_config, DATABASE_PATH)
+            st.sidebar.success("AI config saved!")
+        except Exception:
+            st.sidebar.error("Could not save AI config.")
+
+    # ══════════════════════════════════════════════════════════════════════
+    # AI SEARCH + FILTER + SCORE
+    # ══════════════════════════════════════════════════════════════════════
+    if ai_search_clicked:
         try:
             active_filters = _build_job_filters(
                 keyword=keyword,
-                company=company,
                 location=location,
                 work_mode=work_mode,
                 job_level=job_level,
@@ -408,19 +699,53 @@ def main() -> None:
                 posted_after=posted_after,
                 include_unknown_salary=include_unknown_salary,
             )
-            filtered = apply_filters(st.session_state.jobs_df, active_filters)
-            st.session_state.results_df = calculate_match_score(filtered, active_filters)
+            with st.spinner("🔍 AI searching for jobs across platforms..."):
+                raw_jobs = search_jobs(active_filters)
+
+            # Apply application status overlay
+            raw_jobs = ensure_application_columns(raw_jobs)
+            raw_jobs = apply_saved_application_statuses(raw_jobs, path=DATABASE_PATH)
+
+            # Filter and score
+            filtered = apply_filters(raw_jobs, active_filters)
+            scored = calculate_match_score(filtered, active_filters)
+
+            st.session_state.results_df = scored
+            st.session_state.cover_letter_text = ""
+            st.session_state.selected_job_index = None
+            st.session_state.last_search_count = len(raw_jobs)
+
+            if scored.empty:
+                st.warning(
+                    "No jobs matched your filters. "
+                    "Try broadening your keyword or location."
+                )
+            else:
+                st.success(
+                    f"Found {len(raw_jobs)} jobs — {len(scored)} matched your filters."
+                )
         except ValueError as exc:
-            st.error(f"Please review your filter inputs: {exc}")
-            st.session_state.results_df = pd.DataFrame()
+            st.error(str(exc))
         except Exception:
-            st.error("We could not process the search. Please review your filters and try again.")
-            st.session_state.results_df = pd.DataFrame()
+            st.error(
+                "AI search failed. Check your internet connection and try again."
+            )
 
     results_df = st.session_state.results_df.copy()
-    _render_results_metrics(results_df, len(st.session_state.jobs_df))
 
-    st.subheader("Filtered Results")
+    # ══════════════════════════════════════════════════════════════════════
+    # RESULTS
+    # ══════════════════════════════════════════════════════════════════════
+    if results_df.empty:
+        st.info(
+            "👆 Fill in at least a keyword or location in the sidebar, "
+            "then click **AI Search Jobs** to find vacancies."
+        )
+        return
+
+    _render_results_metrics(results_df, st.session_state.last_search_count)
+
+    st.subheader("📋 Filtered Results")
     st.dataframe(results_df, width="stretch", hide_index=False)
 
     try:
@@ -430,18 +755,19 @@ def main() -> None:
             data=excel_bytes,
             file_name="filtered_jobs.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            disabled=results_df.empty,
         )
     except Exception:
         st.error("We could not prepare the Excel export right now.")
 
+    # ══════════════════════════════════════════════════════════════════════
+    # APPLICATION ASSISTANT
+    # ══════════════════════════════════════════════════════════════════════
     st.divider()
-    st.subheader("Application Assistant")
-    st.caption("This flow only helps you prepare applications manually. It does not auto-submit and does not scrape job sites.")
-
-    if results_df.empty:
-        st.info("Run a search to prepare an application from the filtered results.")
-        return
+    st.subheader("📝 Application Assistant")
+    st.caption(
+        "This flow only helps you prepare applications manually. "
+        "It does not auto-submit and does not scrape job sites."
+    )
 
     job_option_indexes = list(results_df.index)
     selected_job_index = st.selectbox(
@@ -451,12 +777,14 @@ def main() -> None:
     )
     selected_job = results_df.loc[selected_job_index]
     st.session_state.selected_job_index = selected_job_index
+
     selected_tone = st.selectbox(
         "Cover letter tone",
         options=COVER_LETTER_TONES,
         index=COVER_LETTER_TONES.index(st.session_state.cover_letter_tone),
     )
     st.session_state.cover_letter_tone = selected_tone
+
     custom_cover_letter_prompt = st.text_input(
         "Edit prompt",
         value=st.session_state.cover_letter_custom_prompt,
@@ -472,26 +800,62 @@ def main() -> None:
             str(selected_job.get("description", "") or ""),
         )
         if skill_match.matched:
-            st.info(f"Matched CV skills for this job: {', '.join(skill_match.matched)}")
+            st.info(
+                f"Matched CV skills for this job: {', '.join(skill_match.matched)}"
+            )
         else:
-            st.info("CV uploaded, but no direct skill overlap was detected for this selected job yet.")
+            st.info(
+                "CV uploaded, but no direct skill overlap was detected "
+                "for this selected job yet."
+            )
         if skill_match.inferred_job_skills:
-            st.caption(f"Detected job skills: {', '.join(skill_match.inferred_job_skills)}")
+            st.caption(
+                f"Detected job skills: {', '.join(skill_match.inferred_job_skills)}"
+            )
         if skill_match.missing:
-            st.warning(f"Job skills not detected in CV yet: {', '.join(skill_match.missing)}")
+            st.warning(
+                f"Job skills not detected in CV yet: {', '.join(skill_match.missing)}"
+            )
 
-    prepare_clicked = st.button("Prepare Application")
+    prepare_clicked = st.button("Prepare Application", type="primary")
     if prepare_clicked:
         try:
-            st.session_state.cover_letter_text = generate_cover_letter(
-                selected_job,
-                st.session_state.profile,
-                matched_skills=skill_match.matched if skill_match is not None else None,
-                missing_skills=skill_match.missing if skill_match is not None else None,
-                experience_summary=st.session_state.cv_analysis.experience_summary,
-                tone=selected_tone,
-                custom_prompt=custom_cover_letter_prompt,
-            )
+            if (
+                st.session_state.use_ai_cover_letter
+                and st.session_state.llm_config.is_configured
+            ):
+                # AI-powered cover letter via BYOK
+                job_title = str(selected_job.get("job_title", "") or "")
+                company = str(selected_job.get("company", "") or "")
+                location = str(selected_job.get("location", "") or "")
+                skills_text = str(selected_job.get("skills", "") or "")
+                applicant_name = st.session_state.profile.name or "Applicant"
+
+                st.session_state.cover_letter_text = generate_ai_cover_letter(
+                    job_title=job_title,
+                    company=company,
+                    location=location,
+                    skills_text=skills_text,
+                    applicant_name=applicant_name,
+                    cv_summary=st.session_state.cv_analysis.experience_summary,
+                    tone=selected_tone,
+                    config=st.session_state.llm_config,
+                )
+            else:
+                # Template-based cover letter
+                st.session_state.cover_letter_text = generate_cover_letter(
+                    selected_job,
+                    st.session_state.profile,
+                    matched_skills=(
+                        skill_match.matched if skill_match is not None else None
+                    ),
+                    missing_skills=(
+                        skill_match.missing if skill_match is not None else None
+                    ),
+                    experience_summary=st.session_state.cv_analysis.experience_summary,
+                    tone=selected_tone,
+                    custom_prompt=custom_cover_letter_prompt,
+                )
             _sync_status_to_state(selected_job_index, "Draft Ready")
             _persist_selected_job_status(
                 selected_job,
