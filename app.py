@@ -14,7 +14,7 @@ from src.applications import (
     update_application_status,
 )
 from src.cover_letter import generate_cover_letter
-from src.cv_parser import CVAnalysis, analyze_cv_bytes, match_cv_skills_to_job
+from src.cv_parser import CVAnalysis, analyze_cv_bytes, analyze_profile_text, match_cv_skills_to_job
 from src.database import DEFAULT_DATABASE_PATH, init_database
 from src.export_excel import dataframe_to_excel_bytes
 from src.filters import JobFilters, apply_filters
@@ -456,17 +456,53 @@ def main() -> None:
                     "Save Profile", width="stretch"
                 )
 
-            cv_uploaded_file = st.file_uploader(
-                "Upload CV (PDF/DOCX)",
-                type=["pdf", "docx"],
-                key="cv_uploader",
+            # ── CV / Profile Input: toggle between PDF upload and text ─
+            st.divider()
+            st.caption("Import profile from CV or text")
+            cv_input_method = st.radio(
+                "Input method",
+                ["Upload PDF/DOCX", "Write Markdown/Text"],
                 label_visibility="collapsed",
+                horizontal=True,
+                key="cv_input_method",
             )
-            use_cv_profile_clicked = st.button(
-                "Use CV Details in Profile",
-                width="stretch",
-                disabled=cv_uploaded_file is None,
-            )
+
+            cv_uploaded_file = None
+            profile_text_input = ""
+
+            if cv_input_method == "Upload PDF/DOCX":
+                cv_uploaded_file = st.file_uploader(
+                    "Upload CV (PDF/DOCX)",
+                    type=["pdf", "docx"],
+                    key="cv_uploader",
+                    label_visibility="collapsed",
+                )
+                use_cv_profile_clicked = st.button(
+                    "Use CV Details in Profile",
+                    width="stretch",
+                    disabled=cv_uploaded_file is None,
+                )
+                parse_text_clicked = False
+            else:
+                profile_text_input = st.text_area(
+                    "Paste your profile (Markdown or plain text)",
+                    placeholder=(
+                        "Name: Santi Husni\n"
+                        "Email: santi@example.com\n"
+                        "Phone: +628****5678\n"
+                        "LinkedIn: https://linkedin.com/in/santi\n"
+                        "Skills: Python, FastAPI, PostgreSQL, Docker\n"
+                        "Experience: Backend engineer with 5 years..."
+                    ),
+                    height=200,
+                    key="profile_text_input",
+                )
+                use_cv_profile_clicked = False
+                parse_text_clicked = st.button(
+                    "Parse & Use Text Profile",
+                    width="stretch",
+                    disabled=not profile_text_input.strip(),
+                )
 
             # AI-powered Profile & CV generation
             if st.session_state.llm_config.is_configured:
@@ -531,6 +567,22 @@ def main() -> None:
             _toast("Profile fields filled from CV.", "success")
         else:
             _toast("Upload a readable CV first.", "warning")
+
+    # ── Parse text profile handler ───────────────────────────────────
+    if parse_text_clicked and profile_text_input.strip():
+        try:
+            st.session_state.cv_analysis = analyze_profile_text(
+                profile_text_input.strip()
+            )
+            st.session_state.cv_file_name = "text_input"
+            if st.session_state.cv_analysis.text:
+                st.session_state.profile = _merge_profile_with_cv(
+                    st.session_state.profile,
+                    st.session_state.cv_analysis,
+                )
+            _toast("Text profile parsed and applied.", "success")
+        except Exception as exc:
+            _toast(f"Could not parse text profile: {exc}", "error")
 
     # ── AI Generate Summary handler ──────────────────────────────────
     if ai_summary_clicked:

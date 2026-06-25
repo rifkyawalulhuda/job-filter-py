@@ -283,3 +283,79 @@ def match_cv_skills_to_job(cv_skills: list[str], job_skills_text: str, job_descr
         missing=missing,
         inferred_job_skills=job_skill_set,
     )
+
+
+def analyze_profile_text(text: str) -> CVAnalysis:
+    """Analyze user-provided profile text (markdown or plain text).
+
+    Supports formats like:
+
+    Name: Santi Husni
+    Email: santi@example.com
+    Phone: +62812345678
+    LinkedIn: https://linkedin.com/in/santi
+    Skills: Python, FastAPI, PostgreSQL, Docker
+    Experience: Backend engineer with 5 years...
+
+    Also supports markdown headings.
+    """
+    # Strip markdown formatting for cleaner parsing
+    cleaned = re.sub(r"^#+\s*", "", text, flags=re.MULTILINE)  # headings
+    cleaned = re.sub(r"\*\*(.*?)\*\*", r"\1", cleaned)        # bold
+    cleaned = re.sub(r"\*(.*?)\*", r"\1", cleaned)             # italic
+    cleaned = re.sub(r"\[(.*?)\]\(.*?\)", r"\1", cleaned)      # links
+
+    # Try labeled extraction first
+    name = ""
+    email = ""
+    phone = ""
+    linkedin = ""
+    portfolio = ""
+    raw_skills = ""
+    experience_summary = ""
+
+    patterns = {
+        "name": r"(?i)(?:name|nama)[\s:]*\s*(.+)",
+        "email": r"(?i)(?:email|e-mail|mail)[\s:]*\s*([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})",
+        "phone": r"(?i)(?:phone|tel|telepon|no\.?\s*hp)[\s:]*\s*(\+?\d[\d\s\-()]{7,}\d)",
+        "linkedin": r"(?i)(?:linkedin|linked\s*in)[\s:]*\s*(https?://(?:www\.)?linkedin\.com/\S+)",
+        "portfolio": r"(?i)(?:portfolio|website|github)[\s:]*\s*(https?://\S+)",
+        "skills": r"(?i)(?:skills?|keahlian|tech\s*stack)[\s:]*\s*(.+)",
+        "experience": r"(?i)(?:experience|pengalaman|summary|about)[\s:]*\s*(.+)",
+    }
+
+    for field, pattern in patterns.items():
+        match = re.search(pattern, cleaned, re.IGNORECASE)
+        if match:
+            value = match.group(1).strip()
+            if field == "name":
+                name = value
+            elif field == "email":
+                email = value
+            elif field == "phone":
+                phone = value
+            elif field == "linkedin":
+                linkedin = value
+            elif field == "portfolio":
+                portfolio = value
+            elif field == "skills":
+                raw_skills = value
+            elif field == "experience":
+                experience_summary = value
+
+    # Fallback: use the main cv_text analyzer for unstructured text
+    analysis = analyze_cv_text(text)
+
+    # Merge: prefer labeled extraction, fallback to CV analyzer
+    return CVAnalysis(
+        text=text,
+        name=name or analysis.name,
+        email=email or analysis.email,
+        phone=phone or analysis.phone,
+        linkedin_url=linkedin or analysis.linkedin_url,
+        portfolio_url=portfolio or analysis.portfolio_url,
+        skills=extract_known_skills(f"{raw_skills} {text}")
+            if raw_skills
+            else analysis.skills,
+        experience_summary=experience_summary or analysis.experience_summary,
+    )

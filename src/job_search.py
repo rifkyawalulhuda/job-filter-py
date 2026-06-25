@@ -924,12 +924,78 @@ def _result_to_row(result: dict[str, str]) -> dict[str, object]:
     }
 
 
+# ── Detail page scraping ─────────────────────────────────────────────────────
+
+_LINKEDIN_DETAIL_EVAL = """\
+(function(){
+    var title = document.querySelector('.top-card-layout__title, h1')?.textContent?.trim() || '';
+    var company = document.querySelector('.topcard__org-name-link, [class*="company"] a, .topcard__flavor a')?.textContent?.trim() || '';
+    var loc = document.querySelector('.topcard__flavor--bullet, [class*="location"] span')?.textContent?.trim() || '';
+    var desc = document.querySelector('.description__text, .show-more-less-html__markup')?.textContent?.trim() || '';
+    // Filter out UI text like "Hapus teks", "Report this job"
+    desc = desc.replace(/hapus teks|report this job|lapor lowongan ini/gi, '').trim();
+    loc = loc.replace(/hapus teks|report this job/gi, '').trim();
+    return JSON.stringify({title:title, company:company, location:loc, description:desc});
+})()"""
+
+
+def _fetch_job_details(urls: list[str], max_fetch: int = 15) -> list[dict[str, str]]:
+    """Fetch full job descriptions from detail pages using Obscura."""
+    import subprocess
+
+    obscura_bin = _get_obscura_path()
+    results: list[dict[str, str]] = []
+
+    for url in urls[:max_fetch]:
+        if "linkedin.com/jobs/view/" not in url:
+            continue
+        try:
+            result = subprocess.run(
+                [
+                    obscura_bin, "fetch", url,
+                    "--stealth", "--wait-until", "networkidle2",
+                    "--timeout", "20", "--eval", _LINKEDIN_DETAIL_EVAL, "--quiet",
+                ],
+                capture_output=True, text=True, timeout=30,
+            )
+            if result.returncode != 0:
+                continue
+            stdout = result.stdout
+            json_start = stdout.find("{")
+            if json_start < 0:
+                continue
+            import json as json_mod
+            detail = json_mod.loads(stdout[json_start:])
+            desc = detail.get("description", "")
+            if desc:
+                results.append({
+                    "title": detail.get("title", ""),
+                    "company": detail.get("company", ""),
+                    "location": detail.get("location", ""),
+                    "snippet": desc[:300],
+                    "url": url,
+                })
+            time.sleep(1.5)  # Rate limit between fetches
+        except Exception:
+            continue
+
+    return results
+
+
+# ── Multi-platform orchestrator ──────────────────────────────────────────────
+
+
 def search_jobs(
     filters: JobFilters,
     max_results: int = 25,
     backend: SearchBackend | None = None,
+    fetch_details: bool = True,
 ) -> pd.DataFrame:
-    """Search for job vacancies using AI-powered web search.
+    """Search for job vacancies across multiple platforms.
+
+    Phase 1: Discover job listings from LinkedIn + Bing search.
+    Phase 2: Scrape detail pages for full job descriptions.
+    Phase 3: Merge, deduplicate, and normalize.
 
     Parameters
     ----------
@@ -938,19 +1004,19 @@ def search_jobs(
     max_results:
         Maximum number of job results to return (default 25).
     backend:
-        Optional search backend. Defaults to ``DuckDuckGoBackend``.
+        Optional backend override. Defaults to multi-platform orchestrator.
+    fetch_details:
+        Whether to scrape detail pages for full descriptions (default True).
 
     Returns
     -------
     pandas.DataFrame
-        A normalized DataFrame of job vacancies ready for the existing pipeline.
+        A normalized DataFrame of job vacancies.
 
     Raises
     ------
     ValueError
-        If no useful search query can be built from the filters.
-    RuntimeError
-        If the search backend fails.
+        If no useful search query can be built or no results found.
     """
     query = _build_search_query(filters)
     if not query.strip():
@@ -958,18 +1024,67 @@ def search_jobs(
             "Please provide at least a keyword or location to search for jobs."
         )
 
-    search_backend = backend or LinkedInBackend()
+    all_raw: list[dict[str, str]] = []
 
-    try:
-        raw_results = search_backend.search(query, max_results=max_results * 2)
-    except Exception as exc:
-        raise RuntimeError(
-            f"Job search failed: {exc}. Check your internet connection and try again."
-        ) from exc
+    # If a custom backend is provided, use it directly (for tests/mock)
+    if backend is not None:
+        try:
+            raw_results = backend.search(query, max_results=max_results * 2)
+            all_raw.extend(raw_results)
+        except Exception as exc:
+            raise RuntimeError(
+                f"Job search failed: {exc}"
+            ) from exc
+    else:
+        # ── Phase 1: Discovery — LinkedIn ─────────────────────────────
+        try:
+            linkedin = LinkedInBackend()
+            linkedin_results = linkedin.search(query, max_results=max_results * 2)
+            all_raw.extend(linkedin_results)
+        except Exception:
+            pass
 
-    # Filter to only job listings and extract structured data
+        # ── Phase 1b: Discovery — Bing (supplementary) ───────────────
+        if len(all_raw) < max_results:
+            try:
+                bing_query = f"lowongan pekerjaan {query}"
+                bing = ObscuraBackend()
+                bing_results = bing.search(bing_query, max_results=max_results)
+                all_raw.extend(bing_results)
+            except Exception:
+                pass
+
+    # ── Deduplicate by URL ───────────────────────────────────────────
+    seen_urls: set[str] = set()
+    unique: list[dict[str, str]] = []
+    for r in all_raw:
+        url = r.get("url", "")
+        if url and url not in seen_urls:
+            seen_urls.add(url)
+            unique.append(r)
+
+    # ── Phase 2: Detail scraping ─────────────────────────────────────
+    if fetch_details and unique:
+        detail_urls = [r.get("url", "") for r in unique if r.get("url")]
+        try:
+            details = _fetch_job_details(detail_urls, max_fetch=min(15, max_results))
+            # Merge details into unique results (replace matching URLs)
+            detail_map = {d["url"]: d for d in details}
+            for r in unique:
+                if r.get("url") in detail_map:
+                    d = detail_map[r["url"]]
+                    if d.get("snippet"):
+                        r["snippet"] = d["snippet"]
+                    if d.get("company") and not r.get("company"):
+                        r["company"] = d["company"]
+                    if d.get("location") and not r.get("location"):
+                        r["location"] = d["location"]
+        except Exception:
+            pass
+
+    # ── Convert to rows ──────────────────────────────────────────────
     job_rows: list[dict[str, object]] = []
-    for result in raw_results:
+    for result in unique:
         if len(job_rows) >= max_results:
             break
         if _is_job_listing(result):
