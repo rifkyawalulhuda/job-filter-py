@@ -802,6 +802,148 @@ def _parse_linkedin_output(stdout: str, max_results: int) -> list[dict[str, str]
     return results
 
 
+# ── Indeed backend ────────────────────────────────────────────────────────────
+
+_INDEED_EVAL = """\
+(function(){
+    var r=[], seen={};
+    document.querySelectorAll('.resultContent, .job_seen_beacon').forEach(function(c){
+        var aEl=c.querySelector('h2.jobTitle a, a[data-jk]');
+        if(!aEl) return;
+        var t=aEl.querySelector('span[title]')?.getAttribute('title') || aEl.textContent?.trim()||'';
+        var jk=aEl.getAttribute('data-jk')||aEl.href||'';
+        if(!t||seen[t]) return; seen[t]=true;
+        var co=c.querySelector('[data-testid="company-name"], .css-63koeb, .companyName')?.textContent?.trim()||'';
+        var loc=c.querySelector('[data-testid="text-location"], .css-1p0sjhy, .companyLocation')?.textContent?.trim()||'';
+        var link=aEl.href||'';
+        r.push({title:t,company:co,location:loc,link:link});
+    });
+    return JSON.stringify(r);
+})()"""
+
+
+@dataclass(slots=True)
+class IndeedBackend:
+    """Job search using Indeed Indonesia via Obscura."""
+
+    timeout: int = 30
+    _last_request: float = field(default=0.0, init=False)
+
+    def search(self, query: str, max_results: int = 15) -> list[dict[str, str]]:
+        obscura_bin = _get_obscura_path()
+        encoded = quote_plus(query)
+        url = f"https://id.indeed.com/jobs?q={encoded}&l=Jakarta&sort=date"
+
+        # Rate limit
+        elapsed = time.monotonic() - self._last_request
+        if elapsed < 2.0:
+            time.sleep(2.0 - elapsed)
+
+        try:
+            result = subprocess.run(
+                [
+                    obscura_bin, "fetch", url,
+                    "--stealth", "--wait-until", "networkidle2",
+                    "--timeout", str(self.timeout),
+                    "--eval", _INDEED_EVAL, "--quiet",
+                ],
+                capture_output=True, text=True, timeout=self.timeout + 5,
+            )
+            self._last_request = time.monotonic()
+            return _parse_obscura_output(result.stdout, max_results)
+        except Exception as exc:
+            self._last_request = time.monotonic()
+            raise RuntimeError(f"Indeed search failed: {exc}") from exc
+
+
+# ── Google Jobs backend ───────────────────────────────────────────────────────
+
+_GOOGLE_JOBS_EVAL = """\
+(function(){
+    var r=[], seen={};
+    document.querySelectorAll('.PUpOsf').forEach(function(c){
+        var t=c.querySelector('.tNxQIb, h3')?.textContent?.trim()||'';
+        if(!t||seen[t]) return; seen[t]=true;
+        var co=c.querySelector('.wHYlTd, .vNEEBe')?.textContent?.trim()||'';
+        var loc=c.querySelector('.r0wTwd, .Qk80Jf')?.textContent?.trim()||'';
+        var link='';
+        var p=c.closest('div');
+        if(p){
+            var aEl=p.querySelector('a[href*="http"]');
+            if(aEl) link=aEl.href;
+        }
+        r.push({title:t,company:co,location:loc,link:link});
+    });
+    return JSON.stringify(r);
+})()"""
+
+
+@dataclass(slots=True)
+class GoogleJobsBackend:
+    """Job search on Google Jobs via Obscura.
+
+    Uses Google's dedicated jobs vertical (udm=8).
+    Prone to rate-limiting — use as supplementary source.
+    """
+
+    timeout: int = 300
+    filters: JobFilters | None = None
+    _last_request: float = field(default=0.0, init=False)
+
+    def search(self, query: str, max_results: int = 15) -> list[dict[str, str]]:
+        import json as json_mod
+        import subprocess
+
+        f = self.filters
+        keyword = f.keyword.strip() if f and f.keyword.strip() else query
+        location = f.location.strip() if f and f.location.strip() else ""
+        full_query = f"{keyword} {location}".strip()
+
+        url = f"https://www.google.com/search?q={quote_plus(full_query)}&udm=8&hl=en"
+
+        # Rate limit aggressively
+        elapsed = time.monotonic() - self._last_request
+        if elapsed < 5.0:
+            time.sleep(5.0 - elapsed)
+
+        try:
+            result = subprocess.run(
+                [
+                    _get_obscura_path(), "fetch", url,
+                    "--stealth", "--wait-until", "networkidle2",
+                    "--timeout", str(self.timeout),
+                    "--eval", _GOOGLE_JOBS_EVAL, "--quiet",
+                ],
+                capture_output=True, text=True, timeout=self.timeout + 10,
+            )
+            self._last_request = time.monotonic()
+
+            # Parse JSON output
+            stdout = result.stdout
+            json_start = stdout.find("[")
+            if json_start < 0:
+                return []
+            raw = json_mod.loads(stdout[json_start:])
+
+            results: list[dict[str, str]] = []
+            for item in raw:
+                if len(results) >= max_results:
+                    break
+                if not isinstance(item, dict) or not item.get("title"):
+                    continue
+                results.append({
+                    "title": str(item.get("title", "")).strip(),
+                    "company": str(item.get("company", "")).strip(),
+                    "location": str(item.get("location", "")).strip(),
+                    "snippet": "",
+                    "url": str(item.get("link", "")).strip(),
+                })
+            self._last_request = time.monotonic()
+            return results
+        except Exception:
+            return []  # Silently fail on Google rate-limit/CAPTCHA
+
+
 # ── LLM-powered backend (BYOK) ───────────────────────────────────────────────
 
 
@@ -925,124 +1067,43 @@ class LLMSearchBackend:
 
 # ── Indeed Indonesia backend ─────────────────────────────────────────────────
 
-_INDEED_EVAL_SCRIPT = """\
-(function(){
-    var jobs = [];
-    document.querySelectorAll('[data-jk]').forEach(function(el){
-        var jk   = el.getAttribute('data-jk') || '';
-        var titleEl    = el.querySelector('h3.jobTitle span, .jcs-JobTitle span');
-        var companyEl  = el.querySelector('[data-testid="company-name"]');
-        var locationEl = el.querySelector('[data-testid="text-location"]');
-        var salaryEl   = el.querySelector('.css-zydy3i, [data-testid="attribute_snippet_testid"] span');
-        if (!titleEl || !companyEl) return;
-        jobs.push({
-            title:    titleEl.textContent.trim(),
-            company:  companyEl.textContent.trim(),
-            location: locationEl ? locationEl.textContent.trim() : '',
-            salary:   salaryEl   ? salaryEl.textContent.trim()   : '',
-            url:      'https://id.indeed.com/viewjob?jk=' + jk
-        });
-    });
-    return JSON.stringify(jobs);
-})()"""
-
-
 @dataclass(slots=True)
 class IndeedBackend:
-    """Job search on Indeed Indonesia via Obscura headless browser.
+    """Job search using Indeed Indonesia via Obscura."""
 
-    URL pattern: https://id.indeed.com/jobs?q=<keyword>&l=<location>
-    Filter params: jt (jobtype), explvl (experience level), sc (salary range)
-    """
-
-    timeout: int = 15
+    timeout: int = 30
     filters: JobFilters | None = None
     _last_request: float = field(default=0.0, init=False)
 
-    def search(self, query: str, max_results: int = 20) -> list[dict[str, str]]:
-        """Search Indeed Indonesia and return structured results."""
-        import subprocess
-
-        elapsed = time.monotonic() - self._last_request
-        if elapsed < 2.0:
-            time.sleep(2.0 - elapsed)
-
+    def search(self, query: str, max_results: int = 15) -> list[dict[str, str]]:
         obscura_bin = _get_obscura_path()
         f = self.filters
         keyword = quote_plus(f.keyword.strip() if f and f.keyword.strip() else query)
         location = quote_plus(f.location.strip() if f and f.location.strip() else "Indonesia")
-        url = f"https://id.indeed.com/jobs?q={keyword}&l={location}"
+        url = f"https://id.indeed.com/jobs?q={keyword}&l={location}&sort=date"
 
-        # Add experience level filter
-        if f and f.job_level.lower() not in ("", "any"):
-            lvl_map = {
-                "internship": "entry_level", "entry": "entry_level",
-                "junior":     "entry_level", "mid": "mid_level",
-                "senior":     "senior_level", "lead": "senior_level",
-                "manager":    "senior_level",
-            }
-            jt = lvl_map.get(f.job_level.lower(), "")
-            if jt:
-                url += f"&explvl={jt}"
-
-        # Add work type filter
-        if f and f.work_mode.lower() not in ("", "any"):
-            if f.work_mode.lower() == "remote":
-                url += "&remotejob=032b3046-06a3-4876-8dfd-474eb5e7ed11"
-
-        import tempfile, os
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".js", delete=False, encoding="utf-8"
-        ) as tmp:
-            tmp.write(_INDEED_EVAL_SCRIPT)
-            tmp_path = tmp.name
+        # Rate limit
+        elapsed = time.monotonic() - self._last_request
+        if elapsed < 2.0:
+            time.sleep(2.0 - elapsed)
 
         try:
+            import subprocess
+
             result = subprocess.run(
                 [
                     obscura_bin, "fetch", url,
-                    "--stealth", "--wait-until", "domcontentloaded",
+                    "--stealth", "--wait-until", "networkidle2",
                     "--timeout", str(self.timeout),
-                    "--eval-file", tmp_path, "--quiet",
+                    "--eval", _INDEED_EVAL, "--quiet",
                 ],
-                capture_output=True, text=True, encoding="utf-8",
-                timeout=self.timeout + 10,
+                capture_output=True, text=True, timeout=self.timeout + 10,
             )
-        except (subprocess.TimeoutExpired, FileNotFoundError):
-            return []
-        finally:
-            os.unlink(tmp_path)
             self._last_request = time.monotonic()
-
-        return _parse_indeed_output(result.stdout, max_results)
-
-
-def _parse_indeed_output(stdout: str, max_results: int) -> list[dict[str, str]]:
-    """Parse Indeed eval JSON output into result dicts."""
-    import json as json_mod
-
-    json_start = stdout.find("[")
-    if json_start < 0:
-        return []
-    try:
-        raw = json_mod.loads(stdout[json_start:])
-    except json_mod.JSONDecodeError:
-        return []
-
-    results: list[dict[str, str]] = []
-    for item in raw:
-        if len(results) >= max_results:
-            break
-        if not isinstance(item, dict) or not item.get("title"):
-            continue
-        results.append({
-            "title":    str(item.get("title",    "")).strip(),
-            "company":  str(item.get("company",  "")).strip(),
-            "location": str(item.get("location", "")).strip(),
-            "snippet":  str(item.get("salary",   "")).strip(),
-            "url":      str(item.get("url",       "")).strip(),
-        })
-    return results
+            return _parse_obscura_output(result.stdout, max_results)
+        except Exception as exc:
+            self._last_request = time.monotonic()
+            raise RuntimeError(f"Indeed search failed: {exc}") from exc
 
 
 # ── Glints Indonesia backend ──────────────────────────────────────────────────
@@ -1628,6 +1689,7 @@ def search_jobs(
         platforms: list[tuple[str, Any, str, int]] = [
             ("LinkedIn", LinkedInBackend(filters=filters).search,  query,                              max_results * 2),
             ("Indeed",   IndeedBackend(filters=filters).search,    query,                              max_results),
+            ("Google",   GoogleJobsBackend(filters=filters).search, query,                             max_results),
             ("Glints",   GlintsBackend(filters=filters).search,    query,                              max_results),
             ("Kalibrr",  KalibrrBackend(filters=filters).search,   query,                              max_results),
             ("Bing",     ObscuraBackend().search,                   f"lowongan pekerjaan {query}",      max_results),
