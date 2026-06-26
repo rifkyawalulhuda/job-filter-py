@@ -451,7 +451,7 @@ class ObscuraBackend:
     Downloads: https://github.com/h4ckf0r0day/obscura/releases
     """
 
-    timeout: int = 25
+    timeout: int = 15
     _last_request: float = field(default=0.0, init=False)
 
     def search(self, query: str, max_results: int = 20) -> list[dict[str, str]]:
@@ -470,7 +470,7 @@ class ObscuraBackend:
             obscura_bin,
             "fetch", url,
             "--stealth",
-            "--wait-until", "networkidle2",
+            "--wait-until", "domcontentloaded",
             "--timeout", str(self.timeout),
             "--eval", _BING_EVAL_SCRIPT,
             "--quiet",
@@ -481,6 +481,7 @@ class ObscuraBackend:
                 cmd,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
                 timeout=self.timeout + 10,
             )
         except subprocess.TimeoutExpired:
@@ -580,15 +581,123 @@ _LINKEDIN_EVAL_SCRIPT = """\
 })()"""
 
 
+# ── LinkedIn URL builder ──────────────────────────────────────────────────────
+
+# LinkedIn f_E (experience level) mapping from our job_level values
+_LINKEDIN_LEVEL_MAP: dict[str, str] = {
+    "internship": "1",
+    "entry":      "2",
+    "junior":     "2",          # LinkedIn has no "junior" — map to Entry
+    "mid":        "3,4",        # Associate + Mid-Senior
+    "senior":     "4",          # Mid-Senior
+    "lead":       "4,5",        # Mid-Senior + Director
+    "manager":    "4,5",        # Mid-Senior + Director
+}
+
+# LinkedIn f_WT (work type) mapping
+_LINKEDIN_WORK_MODE_MAP: dict[str, str] = {
+    "onsite":  "1",
+    "hybrid":  "2",
+    "remote":  "3",
+}
+
+# LinkedIn geoId for major Indonesian cities + country
+_LINKEDIN_GEO_IDS: dict[str, str] = {
+    "indonesia":    "102478259",
+    "jakarta":      "102749124",
+    "bandung":      "104122966",
+    "surabaya":     "104112802",
+    "yogyakarta":   "104352555",
+    "medan":        "104387822",
+    "semarang":     "104555914",
+    "bali":         "100510840",
+    "tangerang":    "104555842",
+    "bekasi":       "104555907",
+    "depok":        "104555870",
+    "bogor":        "102725340",
+    "malang":       "104555886",
+}
+
+
+def _build_linkedin_url(filters: JobFilters) -> str:
+    """Build a LinkedIn job search URL with all user filters as URL parameters.
+
+    Uses LinkedIn's native filter parameters so the search is pre-filtered
+    server-side, not just post-filtered on the result set.
+    """
+    from urllib.parse import urlencode
+
+    params: dict[str, str] = {}
+
+    # keywords — job title + skills as context
+    keyword_parts: list[str] = []
+    if filters.keyword.strip():
+        keyword_parts.append(filters.keyword.strip())
+    if filters.skills:
+        keyword_parts.extend(filters.skills[:2])   # add up to 2 skills to keyword
+    if keyword_parts:
+        params["keywords"] = " ".join(keyword_parts)
+
+    # Location — prefer geoId for precision, fallback to location string
+    location_key = filters.location.strip().lower() if filters.location.strip() else "indonesia"
+    geo_id = _LINKEDIN_GEO_IDS.get(location_key)
+    if geo_id:
+        params["geoId"] = geo_id
+    elif filters.location.strip():
+        params["location"] = filters.location.strip()
+    else:
+        # Default to Indonesia geoId when no location specified
+        params["geoId"] = _LINKEDIN_GEO_IDS["indonesia"]
+
+    # Experience level (f_E)
+    level_key = filters.job_level.strip().lower()
+    if level_key and level_key != "any":
+        f_e = _LINKEDIN_LEVEL_MAP.get(level_key)
+        if f_e:
+            params["f_E"] = f_e
+
+    # Work type (f_WT)
+    mode_key = filters.work_mode.strip().lower()
+    if mode_key and mode_key != "any":
+        f_wt = _LINKEDIN_WORK_MODE_MAP.get(mode_key)
+        if f_wt:
+            params["f_WT"] = f_wt
+
+    # Time posted (f_TPR) — use posted_after filter if set
+    if filters.posted_after is not None:
+        from datetime import date
+        days_ago = (date.today() - filters.posted_after).days
+        if days_ago <= 1:
+            params["f_TPR"] = "r86400"
+        elif days_ago <= 7:
+            params["f_TPR"] = "r604800"
+        elif days_ago <= 30:
+            params["f_TPR"] = "r2592000"
+        # > 30 days: omit — LinkedIn doesn't support longer windows
+    else:
+        # Default: past week so results are fresh
+        params["f_TPR"] = "r604800"
+
+    # Job type — always full-time by default (f_JT=F)
+    params["f_JT"] = "F"
+
+    return "https://id.linkedin.com/jobs/search?" + urlencode(params)
+
+
 @dataclass(slots=True)
 class LinkedInBackend:
     """Job search on LinkedIn via Obscura headless browser.
 
     Extracts real job listings: title, company, location, and apply URL.
     Requires ``obscura.exe`` in the project's ``bin/`` directory.
+
+    Pass ``filters`` to the constructor so the LinkedIn URL is built with
+    native filter parameters (f_E, f_WT, geoId, f_TPR) instead of relying
+    on a plain keyword query that ignores level, work mode, and location.
     """
 
-    timeout: int = 25
+    timeout: int = 15
+    filters: JobFilters | None = None
     _last_request: float = field(default=0.0, init=False)
 
     def search(self, query: str, max_results: int = 20) -> list[dict[str, str]]:
@@ -600,18 +709,24 @@ class LinkedInBackend:
             time.sleep(2.0 - elapsed)
 
         obscura_bin = _get_obscura_path()
-        encoded = quote_plus(query)
-        # Use Indonesian LinkedIn domain for local results
-        url = (
-            f"https://id.linkedin.com/jobs/search"
-            f"?keywords={encoded}&f_JT=F&f_TPR=r604800"
-        )
+
+        # Use native LinkedIn filter params when filters are available;
+        # otherwise fall back to a plain keyword URL.
+        if self.filters is not None:
+            url = _build_linkedin_url(self.filters)
+        else:
+            encoded = quote_plus(query)
+            url = (
+                f"https://id.linkedin.com/jobs/search"
+                f"?keywords={encoded}&f_JT=F&f_TPR=r604800"
+                f"&geoId={_LINKEDIN_GEO_IDS['indonesia']}"
+            )
 
         cmd = [
             obscura_bin,
             "fetch", url,
             "--stealth",
-            "--wait-until", "networkidle2",
+            "--wait-until", "domcontentloaded",
             "--timeout", str(self.timeout),
             "--eval", _LINKEDIN_EVAL_SCRIPT,
             "--quiet",
@@ -622,6 +737,7 @@ class LinkedInBackend:
                 cmd,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
                 timeout=self.timeout + 10,
             )
         except subprocess.TimeoutExpired:
@@ -689,6 +805,59 @@ def _parse_linkedin_output(stdout: str, max_results: int) -> list[dict[str, str]
 # ── LLM-powered backend (BYOK) ───────────────────────────────────────────────
 
 
+# Known values used to reconstruct filters from the free-text search query.
+_KNOWN_JOB_LEVELS = {
+    "internship", "entry", "junior", "mid", "senior", "lead", "manager",
+}
+_KNOWN_WORK_MODES = {"remote", "hybrid", "onsite"}
+_KNOWN_LOCATIONS = {
+    "jakarta", "bandung", "surabaya", "yogyakarta", "medan", "semarang",
+    "bali", "tangerang", "bekasi", "depok", "bogor", "malang", "solo",
+    "indonesia",
+}
+
+
+def _parse_llm_search_query(query: str) -> dict[str, str]:
+    """Reconstruct keyword/location/level/mode/skills from a space-joined query.
+
+    The orchestrator joins all filter values with spaces, so this parser
+    extracts known categorical tokens and treats the remaining words as the
+    job keyword (with any extra words passed as skills context).
+    """
+    tokens = query.lower().split()
+    if not tokens:
+        return {"keyword": "", "location": "", "job_level": "", "work_mode": "", "skills": ""}
+
+    level = ""
+    mode = ""
+    location = ""
+    remaining: list[str] = []
+
+    for token in tokens:
+        clean = re.sub(r"[^a-z]", "", token)
+        if clean in _KNOWN_JOB_LEVELS and not level:
+            level = clean
+        elif clean in _KNOWN_WORK_MODES and not mode:
+            mode = clean
+        elif clean in _KNOWN_LOCATIONS and not location:
+            location = clean.title() if clean != "indonesia" else "Indonesia"
+        else:
+            remaining.append(token)
+
+    # The remaining words are the job keyword. Passing them all as the keyword
+    # keeps the LLM query faithful to the user's original intent; the LLM can
+    # infer relevant skills from the full phrase.
+    keyword = " ".join(remaining)
+
+    return {
+        "keyword": keyword,
+        "location": location,
+        "job_level": level,
+        "work_mode": mode,
+        "skills": "",
+    }
+
+
 @dataclass(slots=True)
 class LLMSearchBackend:
     """AI-powered job search using user's LLM (BYOK).
@@ -723,25 +892,15 @@ class LLMSearchBackend:
         finally:
             self._last_request = time.monotonic()
 
-        # Parse query into filter-like components
-        parts = query.split()
-        keyword = parts[0] if parts else query
-        location = ""
-        job_level = ""
-        skills = ""
-
-        # Simple heuristic: 2nd word might be location
-        if len(parts) > 1 and parts[1][0].isupper():
-            location = parts[1]
-        if len(parts) > 2:
-            skills = " ".join(parts[2:5])
+        parsed = _parse_llm_search_query(query)
 
         try:
             raw_results = ai_search_jobs(
-                keyword=keyword,
-                location=location,
-                job_level=job_level,
-                skills=skills,
+                keyword=parsed["keyword"],
+                location=parsed["location"],
+                job_level=parsed["job_level"],
+                work_mode=parsed["work_mode"],
+                skills=parsed["skills"],
                 max_results=max_results,
                 config=config,
             )
@@ -764,6 +923,388 @@ class LLMSearchBackend:
         return results
 
 
+# ── Indeed Indonesia backend ─────────────────────────────────────────────────
+
+_INDEED_EVAL_SCRIPT = """\
+(function(){
+    var jobs = [];
+    document.querySelectorAll('[data-jk]').forEach(function(el){
+        var jk   = el.getAttribute('data-jk') || '';
+        var titleEl    = el.querySelector('h3.jobTitle span, .jcs-JobTitle span');
+        var companyEl  = el.querySelector('[data-testid="company-name"]');
+        var locationEl = el.querySelector('[data-testid="text-location"]');
+        var salaryEl   = el.querySelector('.css-zydy3i, [data-testid="attribute_snippet_testid"] span');
+        if (!titleEl || !companyEl) return;
+        jobs.push({
+            title:    titleEl.textContent.trim(),
+            company:  companyEl.textContent.trim(),
+            location: locationEl ? locationEl.textContent.trim() : '',
+            salary:   salaryEl   ? salaryEl.textContent.trim()   : '',
+            url:      'https://id.indeed.com/viewjob?jk=' + jk
+        });
+    });
+    return JSON.stringify(jobs);
+})()"""
+
+
+@dataclass(slots=True)
+class IndeedBackend:
+    """Job search on Indeed Indonesia via Obscura headless browser.
+
+    URL pattern: https://id.indeed.com/jobs?q=<keyword>&l=<location>
+    Filter params: jt (jobtype), explvl (experience level), sc (salary range)
+    """
+
+    timeout: int = 15
+    filters: JobFilters | None = None
+    _last_request: float = field(default=0.0, init=False)
+
+    def search(self, query: str, max_results: int = 20) -> list[dict[str, str]]:
+        """Search Indeed Indonesia and return structured results."""
+        import subprocess
+
+        elapsed = time.monotonic() - self._last_request
+        if elapsed < 2.0:
+            time.sleep(2.0 - elapsed)
+
+        obscura_bin = _get_obscura_path()
+        f = self.filters
+        keyword = quote_plus(f.keyword.strip() if f and f.keyword.strip() else query)
+        location = quote_plus(f.location.strip() if f and f.location.strip() else "Indonesia")
+        url = f"https://id.indeed.com/jobs?q={keyword}&l={location}"
+
+        # Add experience level filter
+        if f and f.job_level.lower() not in ("", "any"):
+            lvl_map = {
+                "internship": "entry_level", "entry": "entry_level",
+                "junior":     "entry_level", "mid": "mid_level",
+                "senior":     "senior_level", "lead": "senior_level",
+                "manager":    "senior_level",
+            }
+            jt = lvl_map.get(f.job_level.lower(), "")
+            if jt:
+                url += f"&explvl={jt}"
+
+        # Add work type filter
+        if f and f.work_mode.lower() not in ("", "any"):
+            if f.work_mode.lower() == "remote":
+                url += "&remotejob=032b3046-06a3-4876-8dfd-474eb5e7ed11"
+
+        import tempfile, os
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".js", delete=False, encoding="utf-8"
+        ) as tmp:
+            tmp.write(_INDEED_EVAL_SCRIPT)
+            tmp_path = tmp.name
+
+        try:
+            result = subprocess.run(
+                [
+                    obscura_bin, "fetch", url,
+                    "--stealth", "--wait-until", "domcontentloaded",
+                    "--timeout", str(self.timeout),
+                    "--eval-file", tmp_path, "--quiet",
+                ],
+                capture_output=True, text=True, encoding="utf-8",
+                timeout=self.timeout + 10,
+            )
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            return []
+        finally:
+            os.unlink(tmp_path)
+            self._last_request = time.monotonic()
+
+        return _parse_indeed_output(result.stdout, max_results)
+
+
+def _parse_indeed_output(stdout: str, max_results: int) -> list[dict[str, str]]:
+    """Parse Indeed eval JSON output into result dicts."""
+    import json as json_mod
+
+    json_start = stdout.find("[")
+    if json_start < 0:
+        return []
+    try:
+        raw = json_mod.loads(stdout[json_start:])
+    except json_mod.JSONDecodeError:
+        return []
+
+    results: list[dict[str, str]] = []
+    for item in raw:
+        if len(results) >= max_results:
+            break
+        if not isinstance(item, dict) or not item.get("title"):
+            continue
+        results.append({
+            "title":    str(item.get("title",    "")).strip(),
+            "company":  str(item.get("company",  "")).strip(),
+            "location": str(item.get("location", "")).strip(),
+            "snippet":  str(item.get("salary",   "")).strip(),
+            "url":      str(item.get("url",       "")).strip(),
+        })
+    return results
+
+
+# ── Glints Indonesia backend ──────────────────────────────────────────────────
+
+_GLINTS_EVAL_SCRIPT = """\
+(function(){
+    var jobs = [];
+    var cards = document.querySelectorAll(
+        'a[aria-label^="Job card title:"], a.CompactOpportunityCardsc__JobCardTitleNoStyleAnchor-sc-dkg8my-12'
+    );
+    cards.forEach(function(a){
+        var card    = a.closest('li, [class*="CompactOpportunity"]') || a.parentElement;
+        var title   = a.getAttribute('aria-label') || a.textContent || '';
+        title = title.replace(/^Job card title:\\s*/i, '').trim();
+        var companyEl  = card ? (
+            card.querySelector('a[class*="CompanyLinkResolver"], a[class*="CompanyLink"]') ||
+            card.querySelector('[class*="CompanyName"]')
+        ) : null;
+        var locationEl = card ? card.querySelector('[class*="JobCardLocation"]') : null;
+        var href = a.href || '';
+        if (!href.startsWith('http')) href = 'https://glints.com' + href;
+        if (!title) return;
+        jobs.push({
+            title:    title,
+            company:  companyEl  ? companyEl.textContent.trim()  : '',
+            location: locationEl ? locationEl.textContent.trim() : '',
+            url:      href.split('?')[0]
+        });
+    });
+    return JSON.stringify(jobs);
+})()"""
+
+
+@dataclass(slots=True)
+class GlintsBackend:
+    """Job search on Glints Indonesia via Obscura headless browser.
+
+    URL: https://glints.com/id/opportunities/jobs/explore?keyword=<kw>&country=ID&locationName=<city>
+    """
+
+    timeout: int = 18
+    filters: JobFilters | None = None
+    _last_request: float = field(default=0.0, init=False)
+
+    def search(self, query: str, max_results: int = 20) -> list[dict[str, str]]:
+        """Search Glints Indonesia and return structured results."""
+        import subprocess
+
+        elapsed = time.monotonic() - self._last_request
+        if elapsed < 2.0:
+            time.sleep(2.0 - elapsed)
+
+        obscura_bin = _get_obscura_path()
+        f = self.filters
+        keyword = quote_plus(f.keyword.strip() if f and f.keyword.strip() else query)
+        location_name = (
+            f.location.strip().title() if f and f.location.strip() else "Indonesia"
+        )
+        url = (
+            f"https://glints.com/id/opportunities/jobs/explore"
+            f"?keyword={keyword}&country=ID&locationName={quote_plus(location_name)}"
+        )
+        if f and f.job_level.lower() not in ("", "any"):
+            lvl_map = {
+                "internship": "INTERNSHIP", "entry": "FRESH_GRAD",
+                "junior":     "LESS_THAN_A_YEAR", "mid": "ONE_TO_THREE_YEARS",
+                "senior":     "THREE_TO_FIVE_YEARS", "lead": "MORE_THAN_FIVE_YEARS",
+                "manager":    "MORE_THAN_FIVE_YEARS",
+            }
+            exp = lvl_map.get(f.job_level.lower(), "")
+            if exp:
+                url += f"&minYearsOfExperience={exp}"
+        if f and f.work_mode.lower() == "remote":
+            url += "&workArrangement=REMOTE"
+        elif f and f.work_mode.lower() == "hybrid":
+            url += "&workArrangement=HYBRID"
+
+        import tempfile, os
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".js", delete=False, encoding="utf-8"
+        ) as tmp:
+            tmp.write(_GLINTS_EVAL_SCRIPT)
+            tmp_path = tmp.name
+
+        try:
+            result = subprocess.run(
+                [
+                    obscura_bin, "fetch", url,
+                    "--stealth", "--wait-until", "networkidle2",
+                    "--timeout", str(self.timeout),
+                    "--eval-file", tmp_path, "--quiet",
+                ],
+                capture_output=True, text=True, encoding="utf-8",
+                timeout=self.timeout + 10,
+            )
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            return []
+        finally:
+            os.unlink(tmp_path)
+            self._last_request = time.monotonic()
+
+        return _parse_glints_output(result.stdout, max_results)
+
+
+def _parse_glints_output(stdout: str, max_results: int) -> list[dict[str, str]]:
+    """Parse Glints eval JSON output into result dicts."""
+    import json as json_mod
+
+    json_start = stdout.find("[")
+    if json_start < 0:
+        return []
+    try:
+        raw = json_mod.loads(stdout[json_start:])
+    except json_mod.JSONDecodeError:
+        return []
+
+    results: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for item in raw:
+        if len(results) >= max_results:
+            break
+        if not isinstance(item, dict) or not item.get("title"):
+            continue
+        url = str(item.get("url", "")).strip()
+        if url in seen:
+            continue
+        seen.add(url)
+        results.append({
+            "title":    str(item.get("title",    "")).strip(),
+            "company":  str(item.get("company",  "")).strip(),
+            "location": str(item.get("location", "")).strip(),
+            "snippet":  "",
+            "url":      url,
+        })
+    return results
+
+
+# ── Kalibrr Indonesia backend ─────────────────────────────────────────────────
+
+_KALIBRR_EVAL_SCRIPT = """\
+(function(){
+    var nd = document.getElementById('__NEXT_DATA__');
+    if (!nd) return JSON.stringify([]);
+    try {
+        var data = JSON.parse(nd.textContent);
+        var jobs = (data.props && data.props.pageProps && data.props.pageProps.jobs)
+                   ? data.props.pageProps.jobs : [];
+        var results = [];
+        for (var i = 0; i < jobs.length; i++) {
+            var j = jobs[i];
+            var loc = (j.locations && j.locations.length > 0)
+                      ? j.locations[0].name || '' : '';
+            var slug = j.slug || String(j.id);
+            var code = (j.company && j.company.code) ? j.company.code : '';
+            var url  = code
+                ? 'https://www.kalibrr.id/id-ID/c/' + code + '/jobs/' + j.id + '/' + slug
+                : 'https://www.kalibrr.id/id-ID/job-board/te/' + slug + '/o/' + j.id;
+            results.push({
+                title:    j.name || '',
+                company:  (j.company && j.company.name) ? j.company.name : '',
+                location: loc,
+                url:      url
+            });
+        }
+        return JSON.stringify(results);
+    } catch(e) { return JSON.stringify([]); }
+})()"""
+
+
+@dataclass(slots=True)
+class KalibrrBackend:
+    """Job search on Kalibrr Indonesia via Obscura headless browser.
+
+    Kalibrr is a Next.js SSR app — all job data is embedded in
+    ``<script id="__NEXT_DATA__">`` as JSON, so no CSS selectors needed.
+    """
+
+    timeout: int = 18
+    filters: JobFilters | None = None
+    _last_request: float = field(default=0.0, init=False)
+
+    def search(self, query: str, max_results: int = 20) -> list[dict[str, str]]:
+        """Search Kalibrr Indonesia and return structured results."""
+        import subprocess
+
+        elapsed = time.monotonic() - self._last_request
+        if elapsed < 2.0:
+            time.sleep(2.0 - elapsed)
+
+        obscura_bin = _get_obscura_path()
+        f = self.filters
+        keyword = f.keyword.strip().lower().replace(" ", "-") if f and f.keyword.strip() else query.lower().replace(" ", "-")
+        location = (
+            f.location.strip().lower().replace(" ", "-") if f and f.location.strip() else "indonesia"
+        )
+        url = f"https://www.kalibrr.id/id-ID/job-board/te/{quote_plus(keyword)}/lo/{quote_plus(location)}"
+
+        import tempfile, os
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".js", delete=False, encoding="utf-8"
+        ) as tmp:
+            tmp.write(_KALIBRR_EVAL_SCRIPT)
+            tmp_path = tmp.name
+
+        try:
+            result = subprocess.run(
+                [
+                    obscura_bin, "fetch", url,
+                    "--stealth", "--wait-until", "domcontentloaded",
+                    "--timeout", str(self.timeout),
+                    "--eval-file", tmp_path, "--quiet",
+                ],
+                capture_output=True, text=True, encoding="utf-8",
+                timeout=self.timeout + 10,
+            )
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            return []
+        finally:
+            os.unlink(tmp_path)
+            self._last_request = time.monotonic()
+
+        return _parse_kalibrr_output(result.stdout, max_results, f)
+
+
+def _parse_kalibrr_output(
+    stdout: str, max_results: int, filters: JobFilters | None
+) -> list[dict[str, str]]:
+    """Parse Kalibrr __NEXT_DATA__ JSON output into result dicts."""
+    import json as json_mod
+
+    json_start = stdout.find("[")
+    if json_start < 0:
+        return []
+    try:
+        raw = json_mod.loads(stdout[json_start:])
+    except json_mod.JSONDecodeError:
+        return []
+
+    results: list[dict[str, str]] = []
+    for item in raw:
+        if len(results) >= max_results:
+            break
+        if not isinstance(item, dict) or not item.get("title"):
+            continue
+        # Client-side filter by job_level / work_mode since Kalibrr URL params
+        # for level/mode are handled by the URL filters above, but __NEXT_DATA__
+        # may include extra entries — still apply loose post-filter
+        title_lower = item.get("title", "").lower()
+        if filters and filters.job_level.lower() not in ("", "any"):
+            lvl = filters.job_level.lower()
+            if lvl == "internship" and "intern" not in title_lower:
+                pass  # keep — level can't be reliably inferred from title alone
+        results.append({
+            "title":    str(item.get("title",    "")).strip(),
+            "company":  str(item.get("company",  "")).strip(),
+            "location": str(item.get("location", "")).strip(),
+            "snippet":  "",
+            "url":      str(item.get("url",       "")).strip(),
+        })
+    return results
+
+
 # ── Job search orchestration ─────────────────────────────────────────────────
 
 
@@ -772,10 +1313,12 @@ JOB_DOMAINS = {
     "linkedin.com/jobs",
     "linkedin.com/comm/jobs",
     "indeed.com",
+    "id.indeed.com",
     "glints.com",
+    "kalibrr.id",
+    "kalibrr.com",
     "jobstreet.co.id",
     "jobstreet.com",
-    "kalibrr.com",
     "glassdoor.com",
     "seek.com.au",
     "monster.com",
@@ -926,61 +1469,94 @@ def _result_to_row(result: dict[str, str]) -> dict[str, object]:
 
 # ── Detail page scraping ─────────────────────────────────────────────────────
 
-_LINKEDIN_DETAIL_EVAL = """\
-(function(){
-    var title = document.querySelector('.top-card-layout__title, h1')?.textContent?.trim() || '';
-    var company = document.querySelector('.topcard__org-name-link, [class*="company"] a, .topcard__flavor a')?.textContent?.trim() || '';
-    var loc = document.querySelector('.topcard__flavor--bullet, [class*="location"] span')?.textContent?.trim() || '';
-    var desc = document.querySelector('.description__text, .show-more-less-html__markup')?.textContent?.trim() || '';
-    // Filter out UI text like "Hapus teks", "Report this job"
-    desc = desc.replace(/hapus teks|report this job|lapor lowongan ini/gi, '').trim();
-    loc = loc.replace(/hapus teks|report this job/gi, '').trim();
-    return JSON.stringify({title:title, company:company, location:loc, description:desc});
-})()"""
+_LINKEDIN_DETAIL_EVAL = ('''(function(){var titleEl=document.querySelector("h1");var title=titleEl?titleEl.textContent.trim():"";var descEl=document.querySelector("[class*=description__text],[class*=show-more-less-html__markup]");var desc=descEl?descEl.textContent.trim():"";desc=desc.replace(/hapus teks|report this job|lapor lowongan ini/gi,"").trim();return JSON.stringify({title:title,description:desc});})()''')
+
+_GLINTS_DETAIL_EVAL = ('''(function(){var h1=document.querySelector("h1");var title=h1?h1.textContent.trim():"";var descEl=document.querySelector("[class*=JobDescription],[class*=jobDescription]");var desc=descEl?descEl.textContent.trim():"";return JSON.stringify({title:title,description:desc});})()''')
+
+_KALIBRR_DETAIL_EVAL = ('''(function(){var nd=document.getElementById("__NEXT_DATA__");if(!nd)return JSON.stringify({title:"",company:"",location:"",description:""});try{var data=JSON.parse(nd.textContent);var pp=(data&&data.props&&data.props.pageProps)?data.props.pageProps:{};var job=pp.job||pp.jobDetail||{};var company=(job.company&&job.company.name)?job.company.name:"";var location=(job.locations&&job.locations.length>0)?job.locations.map(function(l){return l.name;}).join(", "):"";return JSON.stringify({title:job.name||"",company:company,location:location,description:job.description?job.description.replace(/<[^>]+>/g," ").trim():""});}catch(e){return JSON.stringify({title:"",company:"",location:"",description:""});}})()''')
 
 
-def _fetch_job_details(urls: list[str], max_fetch: int = 15) -> list[dict[str, str]]:
-    """Fetch full job descriptions from detail pages using Obscura."""
+def _fetch_one_job_detail(url: str, obscura_bin: str) -> dict[str, str] | None:
+    """Fetch a single job detail page via Obscura for any supported platform."""
     import subprocess
 
+    url_lower = url.lower()
+    if "linkedin.com/jobs/view/" in url_lower:
+        eval_script = _LINKEDIN_DETAIL_EVAL
+        wait_until = "domcontentloaded"
+        timeout = "15"
+    elif "glints.com" in url_lower and "/opportunities/" in url_lower:
+        eval_script = _GLINTS_DETAIL_EVAL
+        wait_until = "networkidle2"
+        timeout = "22"
+    elif "kalibrr.id" in url_lower and "/jobs/" in url_lower:
+        eval_script = _KALIBRR_DETAIL_EVAL
+        wait_until = "domcontentloaded"
+        timeout = "15"
+    elif "indeed.com" in url_lower or "id.indeed.com" in url_lower:
+        return None
+    else:
+        return None
+
+    try:
+        result = subprocess.run(
+            [
+                obscura_bin, "fetch", url,
+                "--stealth", "--wait-until", wait_until,
+                "--timeout", timeout, "--eval", eval_script, "--quiet",
+            ],
+            capture_output=True, text=True, encoding="utf-8",
+            timeout=int(timeout) + 10,
+        )
+        if result.returncode != 0:
+            return None
+        stdout = result.stdout
+        json_start = stdout.find("{")
+        if json_start < 0:
+            return None
+        import json as json_mod
+        detail = json_mod.loads(stdout[json_start:])
+        desc = detail.get("description", "")
+        if not desc:
+            return None
+        return {
+            "title": detail.get("title", ""),
+            "company": detail.get("company", ""),
+            "location": detail.get("location", ""),
+            "snippet": desc[:500],
+            "url": url,
+        }
+    except Exception:
+        return None
+
+
+def _fetch_job_details(urls: list[str], max_fetch: int = 5) -> list[dict[str, str]]:
+    """Fetch full job descriptions from detail pages using Obscura in parallel."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     obscura_bin = _get_obscura_path()
+    supported_prefixes = (
+        "linkedin.com/jobs/view/",
+        "glints.com",
+        "kalibrr.id",
+    )
+    targets = [
+        u for u in urls[:max_fetch]
+        if any(p in u.lower() for p in supported_prefixes)
+    ]
     results: list[dict[str, str]] = []
 
-    for url in urls[:max_fetch]:
-        if "linkedin.com/jobs/view/" not in url:
-            continue
-        try:
-            result = subprocess.run(
-                [
-                    obscura_bin, "fetch", url,
-                    "--stealth", "--wait-until", "networkidle2",
-                    "--timeout", "20", "--eval", _LINKEDIN_DETAIL_EVAL, "--quiet",
-                ],
-                capture_output=True, text=True, timeout=30,
-            )
-            if result.returncode != 0:
-                continue
-            stdout = result.stdout
-            json_start = stdout.find("{")
-            if json_start < 0:
-                continue
-            import json as json_mod
-            detail = json_mod.loads(stdout[json_start:])
-            desc = detail.get("description", "")
-            if desc:
-                results.append({
-                    "title": detail.get("title", ""),
-                    "company": detail.get("company", ""),
-                    "location": detail.get("location", ""),
-                    "snippet": desc[:300],
-                    "url": url,
-                })
-            time.sleep(1.5)  # Rate limit between fetches
-        except Exception:
-            continue
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        futures = {
+            executor.submit(_fetch_one_job_detail, url, obscura_bin): url
+            for url in targets
+        }
+        for future in as_completed(futures):
+            detail = future.result()
+            if detail is not None:
+                results.append(detail)
 
     return results
-
 
 # ── Multi-platform orchestrator ──────────────────────────────────────────────
 
@@ -1036,23 +1612,35 @@ def search_jobs(
                 f"Job search failed: {exc}"
             ) from exc
     else:
-        # ── Phase 1: Discovery — LinkedIn ─────────────────────────────
-        try:
-            linkedin = LinkedInBackend()
-            linkedin_results = linkedin.search(query, max_results=max_results * 2)
-            all_raw.extend(linkedin_results)
-        except Exception:
-            pass
+        # ── Phase 1: Parallel Discovery — all platforms ───────────────
+        # Run LinkedIn, Indeed, Glints, Kalibrr, and Bing concurrently.
+        # Each runs in its own thread; failures are silently skipped.
+        from concurrent.futures import ThreadPoolExecutor, as_completed
 
-        # ── Phase 1b: Discovery — Bing (supplementary) ───────────────
-        if len(all_raw) < max_results:
+        def _search_platform(
+            name: str, fn: Any, q: str, n: int
+        ) -> tuple[str, list[dict[str, str]]]:
             try:
-                bing_query = f"lowongan pekerjaan {query}"
-                bing = ObscuraBackend()
-                bing_results = bing.search(bing_query, max_results=max_results)
-                all_raw.extend(bing_results)
+                return name, fn(q, n)
             except Exception:
-                pass
+                return name, []
+
+        platforms: list[tuple[str, Any, str, int]] = [
+            ("LinkedIn", LinkedInBackend(filters=filters).search,  query,                              max_results * 2),
+            ("Indeed",   IndeedBackend(filters=filters).search,    query,                              max_results),
+            ("Glints",   GlintsBackend(filters=filters).search,    query,                              max_results),
+            ("Kalibrr",  KalibrrBackend(filters=filters).search,   query,                              max_results),
+            ("Bing",     ObscuraBackend().search,                   f"lowongan pekerjaan {query}",      max_results),
+        ]
+
+        with ThreadPoolExecutor(max_workers=len(platforms)) as executor:
+            futures = {
+                executor.submit(_search_platform, name, fn, q, n): name
+                for name, fn, q, n in platforms
+            }
+            for future in as_completed(futures):
+                _, results = future.result()
+                all_raw.extend(results)
 
     # ── Deduplicate by URL ───────────────────────────────────────────
     seen_urls: set[str] = set()
@@ -1063,11 +1651,11 @@ def search_jobs(
             seen_urls.add(url)
             unique.append(r)
 
-    # ── Phase 2: Detail scraping ─────────────────────────────────────
+    # ── Phase 2: Detail scraping (parallel, max 5) ───────────────────
     if fetch_details and unique:
         detail_urls = [r.get("url", "") for r in unique if r.get("url")]
         try:
-            details = _fetch_job_details(detail_urls, max_fetch=min(15, max_results))
+            details = _fetch_job_details(detail_urls, max_fetch=5)
             # Merge details into unique results (replace matching URLs)
             detail_map = {d["url"]: d for d in details}
             for r in unique:

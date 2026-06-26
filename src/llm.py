@@ -10,6 +10,8 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
+import pandas as pd
+
 from src.database import DEFAULT_DATABASE_PATH, init_database
 from src.database import SQLALCHEMY_AVAILABLE
 
@@ -415,19 +417,30 @@ Return ONLY valid JSON. No markdown, no explanation."""
 
 
 def ai_enhance_jobs(
-    jobs: list[dict[str, str]],
+    jobs: list[dict[str, str]] | pd.DataFrame,
     config: LLMConfig | None = None,
-) -> list[dict[str, str]]:
+) -> list[dict[str, str]] | pd.DataFrame:
     """Use LLM to enrich scraped job listings with missing fields.
 
     Takes raw scraped data (title, company, location, URL) and uses the LLM
     to infer: skills, job_level, work_mode, salary range, description.
+
+    Accepts either a list of job dicts or a pandas DataFrame and returns the
+    same type so callers can pass DataFrames directly from the search pipeline.
     """
     llm = LLMClient(config=config or load_llm_config())
 
+    is_dataframe = isinstance(jobs, pd.DataFrame)
+    if is_dataframe:
+        original_index = jobs.index
+        original_columns = jobs.columns
+        records = jobs.to_dict("records")
+    else:
+        records = list(jobs)
+
     # Build compact input for the LLM
     jobs_input = []
-    for i, job in enumerate(jobs):
+    for i, job in enumerate(records):
         jobs_input.append({
             "id": i,
             "title": job.get("title", job.get("job_title", "")),
@@ -481,7 +494,7 @@ Return ONLY valid JSON array. No markdown, no explanation."""
 
     # Merge enrichments back into original jobs
     enhanced = []
-    for i, job in enumerate(jobs):
+    for i, job in enumerate(records):
         enriched = dict(job)  # copy original
         if i < len(enrichments) and isinstance(enrichments[i], dict):
             data = enrichments[i]
@@ -499,6 +512,18 @@ Return ONLY valid JSON array. No markdown, no explanation."""
             if not enriched.get("description") and data.get("description"):
                 enriched["description"] = data["description"]
         enhanced.append(enriched)
+
+    if is_dataframe:
+        result_df = pd.DataFrame(enhanced)
+        # Preserve original column order and any extra columns that existed
+        for column in original_columns:
+            if column not in result_df.columns:
+                result_df[column] = ""
+        result_df = result_df.loc[:, list(original_columns) + [
+            col for col in result_df.columns if col not in original_columns
+        ]]
+        result_df.index = original_index[:len(result_df)]
+        return result_df
 
     return enhanced
 

@@ -702,12 +702,12 @@ def main() -> None:
                 posted_after=posted_after,
                 include_unknown_salary=include_unknown_salary,
             )
-            with st.spinner("Searching for jobs across platforms..."):
+            with st.spinner("Phase 1 — Searching LinkedIn, Indeed, Glints, Kalibrr & Bing in parallel..."):
                 raw_jobs = search_jobs(active_filters)
 
             # AI Enhance: if LLM is configured, enrich scraped data
             if st.session_state.llm_config.is_configured:
-                with st.spinner("AI enriching job data (skills, salary, level)..."):
+                with st.spinner("Phase 3 — AI enriching job data (skills, salary, level)..."):
                     try:
                         raw_jobs = ai_enhance_jobs(
                             raw_jobs,
