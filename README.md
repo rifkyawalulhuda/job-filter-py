@@ -20,9 +20,8 @@ AI-powered job search across 6 platforms (LinkedIn, Indeed, Google Jobs, Glints,
 # Install dependencies
 pip install -r requirements.txt
 
-# Download Obscura headless browser (required for search)
-# https://github.com/h4ckf0r0day/obscura/releases/latest
-# Extract obscura.exe + obscura-worker.exe → bin/
+# Download Obscura headless browser (required for job search)
+python setup.py
 
 # Run the app
 streamlit run app.py

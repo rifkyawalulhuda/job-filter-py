@@ -386,9 +386,11 @@ def _get_obscura_path() -> str:
             return _OBSCURA_BIN
 
     raise RuntimeError(
-        "Obscura binary not found. Download it from "
-        "https://github.com/h4ckf0r0day/obscura/releases "
-        "and place obscura.exe in the bin/ directory."
+        "Obscura headless browser not found. Run once:\n"
+        "    python setup.py\n"
+        "Or download manually from:\n"
+        "    https://github.com/h4ckf0r0day/obscura/releases\n"
+        "Place obscura.exe and obscura-worker.exe in the bin/ directory."
     )
 
 
