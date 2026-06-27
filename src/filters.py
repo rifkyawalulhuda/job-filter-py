@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import date
 
@@ -27,6 +28,22 @@ class JobFilters:
 def _contains_partial(series: pd.Series, value: str) -> pd.Series:
     """Return a case-insensitive partial-match mask for a string series."""
     return series.fillna("").astype(str).str.contains(value, case=False, regex=False)
+
+
+def _keyword_match(series: pd.Series, keyword: str) -> pd.Series:
+    """Match a multi-word keyword loosely against a text series.
+
+    A row matches when the full phrase appears OR when ANY individual word
+    token appears. This keeps results relevant without dropping clearly
+    related listings (e.g. keyword "python developer" still matches a
+    "Senior Python Engineer" title). Tokens shorter than 2 chars are ignored.
+    """
+    text = series.fillna("").astype(str)
+    mask = _contains_partial(text, keyword)
+    tokens = [t for t in re.split(r"\s+", keyword.strip()) if len(t) >= 2]
+    for token in tokens:
+        mask |= _contains_partial(text, token)
+    return mask
 
 
 def _normalize_exact(value: str) -> str:
@@ -80,8 +97,10 @@ def apply_filters(df: pd.DataFrame, filters: JobFilters) -> pd.DataFrame:
     skills = _text_series(filtered, "skills")
 
     if filters.keyword.strip():
-        keyword_mask = _contains_partial(job_title, filters.keyword) | _contains_partial(
-            description, filters.keyword
+        keyword_mask = (
+            _keyword_match(job_title, filters.keyword)
+            | _keyword_match(description, filters.keyword)
+            | _keyword_match(company, filters.keyword)
         )
         mask &= keyword_mask
 
@@ -89,15 +108,25 @@ def apply_filters(df: pd.DataFrame, filters: JobFilters) -> pd.DataFrame:
         mask &= _contains_partial(company, filters.company)
 
     if filters.location.strip():
-        mask &= _contains_partial(location, filters.location)
+        # Keep rows whose location matches OR whose location is unknown (empty).
+        # Many platforms (Glints, Kalibrr, Indeed) return jobs without a parsed
+        # location; dropping them would hide most non-LinkedIn results.
+        location_unknown = location.str.strip() == ""
+        mask &= _contains_partial(location, filters.location) | location_unknown
 
     if filters.work_mode.strip() and _normalize_exact(filters.work_mode) != "any":
-        work_mode_mask = _text_series(filtered, "work_mode").map(_normalize_exact)
-        mask &= work_mode_mask == _normalize_exact(filters.work_mode)
+        work_mode_series = _text_series(filtered, "work_mode").map(_normalize_exact)
+        # Unknown (empty) work_mode passes — non-LinkedIn platforms rarely set it.
+        mask &= (work_mode_series == _normalize_exact(filters.work_mode)) | (
+            work_mode_series == ""
+        )
 
     if filters.job_level.strip() and _normalize_exact(filters.job_level) != "any":
-        job_level_mask = _text_series(filtered, "job_level").map(_normalize_exact)
-        mask &= job_level_mask == _normalize_exact(filters.job_level)
+        job_level_series = _text_series(filtered, "job_level").map(_normalize_exact)
+        # Unknown (empty) job_level passes — non-LinkedIn platforms rarely set it.
+        mask &= (job_level_series == _normalize_exact(filters.job_level)) | (
+            job_level_series == ""
+        )
 
     salary_min_series = _numeric_series(filtered, "salary_min")
     salary_max_series = _numeric_series(filtered, "salary_max")

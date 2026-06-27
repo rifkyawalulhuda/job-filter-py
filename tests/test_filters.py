@@ -66,9 +66,40 @@ def _jobs_dataframe() -> pd.DataFrame:
 
 
 def test_keyword_filtering_matches_job_title() -> None:
+    # Keyword matching is token-based: "python developer" matches the exact
+    # "Python Developer" title (Acme) AND any listing mentioning a token, e.g.
+    # "Beta" whose description mentions "Python". This broad matching keeps
+    # relevant multi-platform results that lack a rich description from being
+    # dropped.
     result = apply_filters(_jobs_dataframe(), JobFilters(keyword="python developer"))
 
-    assert result["company"].tolist() == ["Acme"]
+    assert result["company"].tolist() == ["Acme", "Beta"]
+
+
+def test_keyword_filtering_single_token_is_strict() -> None:
+    # A single-word keyword still only matches rows containing that word.
+    result = apply_filters(_jobs_dataframe(), JobFilters(keyword="frontend"))
+
+    assert result["company"].tolist() == ["Gamma"]
+
+
+def test_location_filter_keeps_rows_with_unknown_location() -> None:
+    # Rows with an empty location (common for Glints/Kalibrr/Indeed results)
+    # must pass the location filter instead of being dropped.
+    jobs = _jobs_dataframe()
+    jobs.loc[1, "location"] = ""  # Beta now has unknown location
+    result = apply_filters(jobs, JobFilters(location="Jakarta"))
+
+    assert set(result["company"].tolist()) == {"Acme", "Beta", "Delta"}
+
+
+def test_work_mode_filter_keeps_rows_with_unknown_work_mode() -> None:
+    jobs = _jobs_dataframe()
+    jobs.loc[0, "work_mode"] = ""  # Acme now has unknown work mode
+    result = apply_filters(jobs, JobFilters(work_mode="hybrid"))
+
+    # Beta (hybrid) plus Acme (unknown) pass; explicit remote/onsite are dropped.
+    assert set(result["company"].tolist()) == {"Acme", "Beta"}
 
 
 def test_keyword_filtering_matches_description() -> None:

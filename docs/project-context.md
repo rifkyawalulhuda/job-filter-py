@@ -1,6 +1,6 @@
 # AI Job Vacancy Filter
 
-**job-filter-py** — Streamlit app untuk mencari lowongan kerja secara otomatis dari LinkedIn Indonesia, dilengkapi filter, scoring, cover letter generation, dan AI enrichment via BYOK LLM.
+**job-filter-py** — Streamlit app untuk mencari lowongan kerja secara otomatis dari berbagai platform Indonesia (LinkedIn, Indeed, Glints, Kalibrr, Bing), dilengkapi filter, scoring, cover letter generation, dan AI enrichment via BYOK LLM.
 
 ## Arsitektur
 
@@ -12,14 +12,18 @@ job-filter-py/
 │   └── obscura-worker.exe       ← Worker for parallel scraping
 ├── src/
 │   ├── job_search.py            ← Multi-platform search orchestrator
-│   │   ├── LinkedInBackend      ← LinkedIn job search via Obscura
-│   │   ├── ObscuraBackend       ← Bing search via Obscura
-│   │   ├── GoogleBackend        ← Google search (JS-only, not used)
-│   │   ├── YahooBackend         ← Yahoo search (rate-limited)
-│   │   ├── DuckDuckGoBackend    ← DDG search (blocked on this machine)
+│   │   ├── LinkedInBackend      ← LinkedIn jobs via Obscura (native filters)
+│   │   ├── IndeedBackend        ← Indeed Indonesia via Obscura
+│   │   ├── GlintsBackend        ← Glints Indonesia via Obscura
+│   │   ├── KalibrrBackend       ← Kalibrr Indonesia via Obscura (__NEXT_DATA__)
+│   │   ├── GoogleJobsBackend    ← Google Jobs vertical (udm=8), rate-limited
+│   │   ├── ObscuraBackend       ← Bing search via Obscura (supplementary)
+│   │   ├── GoogleBackend        ← Google HTML scrape (JS-only, legacy)
+│   │   ├── YahooBackend         ← Yahoo search (rate-limited, legacy)
+│   │   ├── DuckDuckGoBackend    ← DDG search (blocked on this machine, legacy)
 │   │   ├── LLMSearchBackend     ← AI search via BYOK LLM
-│   │   ├── _fetch_job_details() ← Scrape detail pages for full descriptions
-│   │   └── search_jobs()        ← Multi-platform orchestrator
+│   │   ├── _fetch_job_details() ← Scrape detail pages (LinkedIn/Glints/Kalibrr)
+│   │   └── search_jobs()        ← Multi-platform parallel orchestrator
 │   ├── llm.py                   ← LLM client + BYOK config + AI features
 │   │   ├── LLMConfig            ← API key, endpoint, model (persisted to SQLite)
 │   │   ├── LLMClient            ← OpenAI-compatible HTTP client
@@ -77,16 +81,17 @@ job-filter-py/
 ┌─────────────────────────────────────────────────────────────┐
 │ AI SEARCH PIPELINE                                            │
 │                                                               │
-│ Phase 1a: LinkedIn Discovery                                  │
-│   obscura fetch "id.linkedin.com/jobs/search?keywords=..."    │
-│   → 60+ individual jobs (title, company, location, URL)       │
+│ Phase 1: Parallel Discovery (ThreadPoolExecutor, 6 threads)   │
+│   ├ LinkedIn  → id.linkedin.com/jobs/search (native filters)  │
+│   ├ Indeed    → id.indeed.com/jobs                            │
+│   ├ Glints    → glints.com/id/opportunities/jobs/explore      │
+│   ├ Kalibrr   → kalibrr.id/id-ID/job-board (__NEXT_DATA__)    │
+│   ├ Google    → google.com/search?udm=8 (often empty/blocked) │
+│   └ Bing      → bing.com/search (supplementary)               │
+│   → semua hasil digabung + dedup by URL                       │
 │                                                               │
-│ Phase 1b: Bing Discovery (supplementary)                      │
-│   obscura fetch "bing.com/search?q=lowongan+pekerjaan+..."    │
-│   → Additional job URLs                                       │
-│                                                               │
-│ Phase 2: Detail Scraping (15 jobs)                            │
-│   for each linkedin.com/jobs/view/ URL:                       │
+│ Phase 2: Detail Scraping (parallel, max 5)                    │
+│   for LinkedIn / Glints / Kalibrr detail URLs:                │
 │     obscura fetch → extract full description                  │
 │                                                               │
 │ Phase 3: AI Enrichment (if BYOK configured)                   │
@@ -162,19 +167,33 @@ Download: https://github.com/h4ckf0r0day/obscura/releases
 
 ### Phase 1: Discovery
 
+Semua platform dijalankan **paralel** (`ThreadPoolExecutor`) di `search_jobs()`.
+Tiap backend fail-silent: bila error/0 hasil, platform itu hanya dilewati.
+
 | Platform | Status | Metode |
 |---|---|---|
-| **LinkedIn Indonesia** | ✅ Primary | `id.linkedin.com/jobs/search` via Obscura — 60+ individual jobs |
-| **Bing (supplementary)** | ✅ Fallback | `bing.com/search?q=lowongan+pekerjaan+...` via Obscura |
-| Glints | ❌ SPA | Next.js JS errors, not scrapeable |
-| Kalibrr | ❌ SPA | Heavy SPA, not scrapeable |
-| Jobstreet | ❌ SPA | Redirect to homepage, not scrapeable |
+| **LinkedIn Indonesia** | ✅ Aktif | `id.linkedin.com/jobs/search` via Obscura, native filter (f_E, f_WT, geoId, f_TPR) |
+| **Indeed Indonesia** | ✅ Aktif | `id.indeed.com/jobs` via Obscura |
+| **Glints Indonesia** | ✅ Aktif | `glints.com/id/opportunities/jobs/explore` via Obscura (inline `--eval`) |
+| **Kalibrr Indonesia** | ✅ Aktif | `kalibrr.id/id-ID/job-board` via Obscura, parse `__NEXT_DATA__` JSON |
+| **Bing (supplementary)** | ✅ Aktif | `bing.com/search?q=lowongan+pekerjaan+...` via Obscura |
+| Google Jobs | ⚠️ Best-effort | `google.com/search?udm=8` via Obscura — sering kosong (CAPTCHA/rate-limit), fail-silent |
+| Jobstreet | ❌ SPA | Redirect ke homepage, belum ada backend |
+
+> **Smoke test terakhir** (query `python developer Jakarta`, mesin ini):
+> LinkedIn ✅, Indeed ✅, Glints ✅ (10), Kalibrr ✅ (10), Bing ✅ (10),
+> Google Jobs kosong (rate-limit). Jalankan ulang dengan skrip smoke test bila perlu.
+>
+> **Catatan obscura:** binary `bin/obscura.exe` v0.1.8 hanya mendukung flag
+> `--eval` (inline script), **bukan** `--eval-file`. Semua backend harus
+> mengirim eval script secara inline.
 
 ### Phase 2: Detail Scraping
 
-- `_fetch_job_details()` — scrapes 15 job detail pages via Obscura
+- `_fetch_job_details()` — scrapes detail pages via Obscura (parallel, max 5)
+- Supported: LinkedIn (`/jobs/view/`), Glints (`/opportunities/`), Kalibrr (`/jobs/`)
 - Extracts: full job description, verified company name, location
-- Rate-limited: 1.5s between fetches
+- Runs in `ThreadPoolExecutor` (max 5 workers)
 
 ### Phase 3: AI Enrichment (BYOK)
 
@@ -239,8 +258,9 @@ python -m pytest tests/ -v
 
 | Fitur | Status |
 |---|---|
-| Multi-platform job search (LinkedIn + Bing) | ✅ Production |
-| Detail page scraping (full job description) | ✅ Production |
+| Multi-platform job search (LinkedIn, Indeed, Glints, Kalibrr, Bing) | ✅ Production |
+| Google Jobs backend | ⚠️ Best-effort (sering di-rate-limit Google) |
+| Detail page scraping (LinkedIn/Glints/Kalibrr) | ✅ Production |
 | AI enrichment (skills, level, salary) | ✅ Production (BYOK) |
 | AI Cover Letter (language-aware) | ✅ Production (BYOK) |
 | AI Profile Summary / CV Generator | ✅ Production (BYOK) |
@@ -268,7 +288,8 @@ python -m pytest tests/ -v
   - Yahoo: rate-limited
 - **Headless Browser**: Obscura v0.1.8 (Rust + V8, 30 MB memory)
   - Location: `bin/obscura.exe`
-  - Used for: LinkedIn search, Bing search, detail page scraping
+  - Used for: LinkedIn, Indeed, Glints, Kalibrr, Bing search + detail page scraping
+  - ⚠️ Hanya mendukung flag `--eval` (inline JS), **bukan** `--eval-file`
 - **Provider LLM**: dough.id (`mimo/mimo-v2.5`) via `api.tokenrouter.com/v1`
   - Also tested: `deepseek/deepseek-v4-pro` (reasoning model)
   - Supports: any OpenAI-compatible endpoint

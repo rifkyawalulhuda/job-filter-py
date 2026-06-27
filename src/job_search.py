@@ -822,40 +822,6 @@ _INDEED_EVAL = """\
 })()"""
 
 
-@dataclass(slots=True)
-class IndeedBackend:
-    """Job search using Indeed Indonesia via Obscura."""
-
-    timeout: int = 30
-    _last_request: float = field(default=0.0, init=False)
-
-    def search(self, query: str, max_results: int = 15) -> list[dict[str, str]]:
-        obscura_bin = _get_obscura_path()
-        encoded = quote_plus(query)
-        url = f"https://id.indeed.com/jobs?q={encoded}&l=Jakarta&sort=date"
-
-        # Rate limit
-        elapsed = time.monotonic() - self._last_request
-        if elapsed < 2.0:
-            time.sleep(2.0 - elapsed)
-
-        try:
-            result = subprocess.run(
-                [
-                    obscura_bin, "fetch", url,
-                    "--stealth", "--wait-until", "networkidle2",
-                    "--timeout", str(self.timeout),
-                    "--eval", _INDEED_EVAL, "--quiet",
-                ],
-                capture_output=True, text=True, timeout=self.timeout + 5,
-            )
-            self._last_request = time.monotonic()
-            return _parse_obscura_output(result.stdout, max_results)
-        except Exception as exc:
-            self._last_request = time.monotonic()
-            raise RuntimeError(f"Indeed search failed: {exc}") from exc
-
-
 # ── Google Jobs backend ───────────────────────────────────────────────────────
 
 _GOOGLE_JOBS_EVAL = """\
@@ -1181,20 +1147,13 @@ class GlintsBackend:
         elif f and f.work_mode.lower() == "hybrid":
             url += "&workArrangement=HYBRID"
 
-        import tempfile, os
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".js", delete=False, encoding="utf-8"
-        ) as tmp:
-            tmp.write(_GLINTS_EVAL_SCRIPT)
-            tmp_path = tmp.name
-
         try:
             result = subprocess.run(
                 [
                     obscura_bin, "fetch", url,
                     "--stealth", "--wait-until", "networkidle2",
                     "--timeout", str(self.timeout),
-                    "--eval-file", tmp_path, "--quiet",
+                    "--eval", _GLINTS_EVAL_SCRIPT, "--quiet",
                 ],
                 capture_output=True, text=True, encoding="utf-8",
                 timeout=self.timeout + 10,
@@ -1202,7 +1161,6 @@ class GlintsBackend:
         except (subprocess.TimeoutExpired, FileNotFoundError):
             return []
         finally:
-            os.unlink(tmp_path)
             self._last_request = time.monotonic()
 
         return _parse_glints_output(result.stdout, max_results)
@@ -1301,20 +1259,13 @@ class KalibrrBackend:
         )
         url = f"https://www.kalibrr.id/id-ID/job-board/te/{quote_plus(keyword)}/lo/{quote_plus(location)}"
 
-        import tempfile, os
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".js", delete=False, encoding="utf-8"
-        ) as tmp:
-            tmp.write(_KALIBRR_EVAL_SCRIPT)
-            tmp_path = tmp.name
-
         try:
             result = subprocess.run(
                 [
                     obscura_bin, "fetch", url,
                     "--stealth", "--wait-until", "domcontentloaded",
                     "--timeout", str(self.timeout),
-                    "--eval-file", tmp_path, "--quiet",
+                    "--eval", _KALIBRR_EVAL_SCRIPT, "--quiet",
                 ],
                 capture_output=True, text=True, encoding="utf-8",
                 timeout=self.timeout + 10,
@@ -1322,7 +1273,6 @@ class KalibrrBackend:
         except (subprocess.TimeoutExpired, FileNotFoundError):
             return []
         finally:
-            os.unlink(tmp_path)
             self._last_request = time.monotonic()
 
         return _parse_kalibrr_output(result.stdout, max_results, f)
